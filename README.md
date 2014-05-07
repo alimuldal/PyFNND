@@ -5,11 +5,12 @@ A Python implementation of Fast Non-Negative Deconvolution
 
 This is a Python implementation of Joshua Vogelstein's fast non-negative deconvolution algorithm for inferring spikes from neuronal calcium imaging data. Fast non-negative deconvolution uses an interior point method to solve the following optimization problem:
 
-![img]http://bit.ly/1qfgrbd[/img]
+    n_best = argmax_{n >= 0} P(n | F)
 
 where n_best is the maximum a posteriori estimate for the most likely spike train, given the fluorescence signal F, and the model:
 
-![img]http://bit.ly/1mDt22h[/img]
+    C_{t} = gamma * C_{t-1} + n_t,          n_t ~ Poisson(lambda * dt)
+    F_{t} = C_t + beta + epsilon,           epsilon ~ N(0, sigma)
 
 It is also possible to estimate the model parameters sigma, beta and lambda from the data using pseudo-EM updates.
 
