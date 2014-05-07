@@ -1,15 +1,15 @@
 PyFNND
 =======
-A Python implementation of Joshua Vogelstein's Fast Non-Negative Deconvolution algorithm for inferring spikes from calcium imaging data.
+A Python implementation of Fast Non-Negative Deconvolution
 ------------------------------------
 
-Fast non-negative deconvolution uses an interior point method to solve the following optimization problem:
+This is a Python implementation of Joshua Vogelstein's fast non-negative deconvolution algorithm for inferring spikes from neuronal calcium imaging data. Fast non-negative deconvolution uses an interior point method to solve the following optimization problem:
 
-[img]http://bit.ly/1qfgrbd[/img]
+![img]http://bit.ly/1qfgrbd[/img]
 
 where n_best is the maximum a posteriori estimate for the most likely spike train, given the fluorescence signal F, and the model:
 
-[img]http://bit.ly/1mDt22h[/img]
+![img]http://bit.ly/1mDt22h[/img]
 
 It is also possible to estimate the model parameters sigma, beta and lambda from the data using pseudo-EM updates.
 
@@ -58,7 +58,7 @@ Example useage
 
     plt.show()
 
-[Imgur](http://i.imgur.com/BxRRKA6.png)
+![Imgur](http://i.imgur.com/BxRRKA6.png)
 
 Reference
 ----------
