@@ -1,6 +1,7 @@
 import numpy as np
 from scipy import stats, ndimage
-import fnndeconv
+from _fnndeconv import deconvolve
+
 
 def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
                    sigma=0.2):
@@ -31,7 +32,7 @@ def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
     # internal calcium dynamics
     nk = int(10 * tau / dt)
     t = np.arange(nk) * dt
-    kernel = np.exp( -t / tau)
+    kernel = np.exp(-t / tau)
     C = ndimage.convolve1d(S.astype(np.float64), kernel, axis=1,
                            origin=-nk / 2)
 
@@ -40,13 +41,13 @@ def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
 
     return (A.squeeze() for A in (S, C, F))
 
+
 def make_demo_plots():
 
     np.random.seed(0)
 
     s, c, f = make_fake_data(1, 10000)
-    n_best, c_best, ll_best, theta_best = fnndeconv.deconvolve(
-        f, verbosity=1)
+    n_best, c_best, ll_best, theta_best = deconvolve(f, verbosity=1)
 
     try:
         import matplotlib

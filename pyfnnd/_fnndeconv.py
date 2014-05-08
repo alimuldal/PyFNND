@@ -3,7 +3,7 @@ from scipy import ndimage
 from itertools import izip
 import time
 import warnings
-import tridiag_solvers
+from _tridiag_solvers import trisolve
 
 DTYPE = np.float64
 FMT = 'csc'
@@ -425,7 +425,7 @@ def _direction(n, res, sigma, gamma, scale_var, grad_lnprior, z):
     Hd1 = z * gamma / n2
 
     # solve the tridiagonal system Hd = -g
-    d = tridiag_solvers.trisolve(Hd1, Hd0, Hd1.copy(), -g, inplace=True)
+    d = trisolve(Hd1, Hd0, Hd1.copy(), -g, inplace=True)
 
     return d
 
@@ -468,7 +468,7 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=0.5):
     K = 1.4785
 
     # noise parameter
-    abs_dev = np.abs(F - np.median(F, axis=1, keepdims=True))
+    abs_dev = np.abs(F - np.median(F, axis=1)[:, None])
     sigma = np.median(abs_dev, axis=1) / K     # vector
 
     # baseline parameter

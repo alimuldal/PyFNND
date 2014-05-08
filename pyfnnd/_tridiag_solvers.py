@@ -1,5 +1,5 @@
 import numpy as np
-import gtsv
+import _gtsv
 
 
 def trisolve(dl, d, du, b, inplace=False):
@@ -69,29 +69,52 @@ def trisolve(dl, d, du, b, inplace=False):
 
     # b will now be modified in place to give the result
     if rtype == np.float32:
-        gtsv.sgtsv(n, nrhs, dl, d, du, b, ldb)
+        _gtsv.sgtsv(n, nrhs, dl, d, du, b, ldb)
     elif rtype == np.float64:
-        gtsv.dgtsv(n, nrhs, dl, d, du, b, ldb)
+        _gtsv.dgtsv(n, nrhs, dl, d, du, b, ldb)
     else:
         raise ValueError('Unsupported result type: %s' % rtype)
 
     return b.reshape(bshape_in)
 
 
-def test_trisolve(n=20000):
+def bench_trisolve():
 
+    import time
     from scipy import sparse
     import scipy.sparse.linalg
 
-    d0 = np.random.randn(n)
-    d1 = np.random.randn(n - 1)
+    N = np.logspace(2, 6, 5).astype(np.int)
 
-    H = sparse.diags((d1, d0, d1), (-1, 0, 1), format='csc')
-    x = np.random.randn(n)
-    g = np.dot(H, x)
+    dgtsv_times = []
+    LU_times = []
 
-    xhat1 = trisolve(d1, d0, d1, g, inplace=False)
-    xhat2 = sparse.linalg.spsolve(H, g)
+    for n in N:
 
-    print "dgtsv: ", np.linalg.norm(x - xhat1)
-    print "LU: ", np.linalg.norm(x - xhat2)
+        d0 = np.random.randn(n)
+        d1 = np.random.randn(n - 1)
+
+        H = sparse.diags((d1, d0, d1), (-1, 0, 1), format='csc')
+        x = np.random.randn(n)
+        g = H.dot(x)
+
+        start = time.time()
+        for _ in xrange(5):
+            xhat = trisolve(d1, d0, d1, g, inplace=False)
+        t1 = (time.time() - start) / 5.
+        norm1 = np.linalg.norm(x - xhat)
+
+        start = time.time()
+        for _ in xrange(5):
+            xhat = sparse.linalg.spsolve(H, g)
+        t2 = (time.time() - start) / 5.
+        norm2 = np.linalg.norm(x - xhat)
+
+        print "n = %i" % n
+        print "Time (sec):\tdgtsv: %g\tLU: %g" % (t1, t2)
+        print "||x - xhat||2:\tdgtsv: %g\tLU: %g" % (norm1, norm2)
+
+        dgtsv_times.append(t1)
+        LU_times.append(t2)
+
+    return N, np.array(dgtsv_times), np.array(LU_times)
