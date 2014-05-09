@@ -14,7 +14,7 @@ where `n_best` is the maximum a posteriori estimate for the most likely spike tr
 
 It is also possible to estimate the model parameters sigma, beta and lambda from the data using pseudo-EM updates.
 
-This particular version was written for the [Kaggle Connectomics Challenge](https://www.kaggle.com/c/connectomics), and was optimized for speed when dealing with very large arrays of fluorescence data. In particular, it wraps the [`dgtsv`](http://www.netlib.org/lapack/explore-html/d1/db3/dgtsv_8f.html) subroutine from the LAPACK Fortran library to efficiently solve for the update direction for each Newton step. The optional dependency on [`joblib`](https://pythonhosted.org/joblib) allows multiple fluorescence traces to be processed in parallel. It is possible to obtain spike train estimates for 1000 neurons sampled at 50Hz for 1 hour each within about 10 min on a modern quad core laptop.
+This version was written for the [Kaggle Connectomics Challenge](https://www.kaggle.com/c/connectomics), and was optimized for speed when dealing with very large arrays of fluorescence data. In particular, it wraps the [`dgtsv`](http://www.netlib.org/lapack/explore-html/d1/db3/dgtsv_8f.html) subroutine from the LAPACK Fortran library to efficiently solve for the update direction for each Newton step. The optional dependency on [`joblib`](https://pythonhosted.org/joblib) allows multiple fluorescence traces to be processed in parallel. It is possible to obtain spike train estimates for 1000 neurons sampled at 50Hz for 1 hour each within about 10 min on a modern quad core laptop.
 
 Dependencies
 -------------
@@ -24,6 +24,12 @@ Dependencies
 * A shared LAPACK library (source is available from [here](http://www.netlib.org/lapack/#_software); Ubuntu users can simply `$ sudo apt-get install liblapack`)
 
 PyFNND has been tested on machines running Ubuntu Linux (13.10), and using `numpy` v1.8.1 and `scipy` v0.14.0, as well as the current bleeding-edge dev versions of both libraries. Any comments, suggestions or bug reports are all welcome.
+
+Installation
+---------------
+From the root of the source distribution, simply call
+
+    python setup.py install
 
 Example useage
 -----------------
