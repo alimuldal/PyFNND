@@ -1,5 +1,25 @@
 import numpy as np
-import _gtsv
+import ctypes
+from ctypes import byref
+from ctypes.util import find_library
+from numpy.ctypeslib import ndpointer
+
+# try and find a LAPACK shared library
+for name in ('openblas', 'lapack'):
+    libname = find_library(name)
+    if libname:
+        break
+if libname is None:
+    raise EnvironmentError('Could not locate a LAPACK shared library', 2)
+
+lapack_lib = ctypes.cdll.LoadLibrary(libname)
+dgtsv = lapack_lib.dgtsv_
+sgtsv = lapack_lib.sgtsv_
+
+# pointer ctypes
+_c_int_p = ctypes.POINTER(ctypes.c_int)
+_c_float_p = ctypes.POINTER(ctypes.c_float)
+_c_double_p = ctypes.POINTER(ctypes.c_double)
 
 
 def trisolve(dl, d, du, b, inplace=False):
@@ -49,6 +69,11 @@ def trisolve(dl, d, du, b, inplace=False):
         # needs to be (ldb, nrhs)
         b = b[:, None]
 
+    _n = ctypes.c_int(d.shape[0])
+    _nrhs = ctypes.c_int(b.shape[1])
+    _ldb = ctypes.c_int(b.shape[0])
+    _info = ctypes.c_int(1)
+
     rtype = np.result_type(dl, d, du, b)
 
     if not inplace:
@@ -63,15 +88,22 @@ def trisolve(dl, d, du, b, inplace=False):
     dl, d, du, b = (np.array(v, dtype=rtype, copy=False, order='F')
                     for v in (dl, d, du, b))
 
-    n = d.shape[0]
-    nrhs = b.shape[1]
-    ldb = b.shape[0]
-
     # b will now be modified in place to give the result
     if rtype == np.float32:
-        _gtsv.sgtsv(n, nrhs, dl, d, du, b, ldb)
+        sgtsv(byref(_n), byref(_nrhs),
+              dl.ctypes.data_as(_c_float_p),
+              d.ctypes.data_as(_c_float_p),
+              du.ctypes.data_as(_c_float_p),
+              b.ctypes.data_as(_c_float_p),
+              byref(_ldb), byref(_info))
+
     elif rtype == np.float64:
-        _gtsv.dgtsv(n, nrhs, dl, d, du, b, ldb)
+        dgtsv(byref(_n), byref(_nrhs),
+              dl.ctypes.data_as(_c_double_p),
+              d.ctypes.data_as(_c_double_p),
+              du.ctypes.data_as(_c_double_p),
+              b.ctypes.data_as(_c_double_p),
+              byref(_ldb), byref(_info))
     else:
         raise ValueError('Unsupported result type: %s' % rtype)
 
@@ -85,6 +117,7 @@ def bench_trisolve():
     import scipy.sparse.linalg
 
     N = np.logspace(2, 6, 5).astype(np.int)
+    nreps = 5
 
     dgtsv_times = []
     LU_times = []
@@ -99,18 +132,18 @@ def bench_trisolve():
         g = H.dot(x)
 
         start = time.time()
-        for _ in xrange(5):
+        for _ in xrange(nreps):
             xhat = trisolve(d1, d0, d1, g, inplace=False)
-        t1 = (time.time() - start) / 5.
+        t1 = (time.time() - start) / nreps
         norm1 = np.linalg.norm(x - xhat)
 
         start = time.time()
-        for _ in xrange(5):
+        for _ in xrange(nreps):
             xhat = sparse.linalg.spsolve(H, g)
-        t2 = (time.time() - start) / 5.
+        t2 = (time.time() - start) / nreps
         norm2 = np.linalg.norm(x - xhat)
 
-        print "n = %i" % n
+        print "\nn = %i" % n
         print "Time (sec):\tdgtsv: %g\tLU: %g" % (t1, t2)
         print "||x - xhat||2:\tdgtsv: %g\tLU: %g" % (norm1, norm2)
 
