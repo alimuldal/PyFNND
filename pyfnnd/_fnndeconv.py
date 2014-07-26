@@ -393,7 +393,8 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 def _post_LL(n, res, scale_var, lD, z):
 
     # barrier term
-    barrier = np.log(n).sum()       # this is currently a bottleneck
+    with np.errstate(invalid='ignore'):
+        barrier = np.log(n).sum()       # this is currently a bottleneck
 
     # sum of squared (predicted - actual) fluorescence
     # res_ss = np.sum(res ** 2)

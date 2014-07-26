@@ -29,7 +29,7 @@ Installation
 ---------------
 From the root of the source distribution, simply call
 
-    python setup.py install
+    $ python setup.py install
 
 Example useage
 -----------------
@@ -73,3 +73,10 @@ Example useage
 Reference
 ----------
 Vogelstein, J. T., Packer, A. M., Machado, T. a, Sippy, T., Babadi, B., Yuste, R., & Paninski, L. (2010). Fast nonnegative deconvolution for spike train inference from population calcium imaging. Journal of Neurophysiology, 104(6), 3691-704. doi:10.1152/jn.01073.2009
+
+License
+-----
+PyFNND is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
