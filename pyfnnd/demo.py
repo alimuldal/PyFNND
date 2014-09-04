@@ -51,7 +51,6 @@ def make_demo_plots():
 
     try:
         import matplotlib
-        matplotlib.use('gtk')
         from matplotlib import pyplot as plt
         plt.ion()
     except ImportError:

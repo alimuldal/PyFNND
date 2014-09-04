@@ -133,7 +133,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
 
     Reference:
     ---------------------------------------------------------------------------
-    Vogelstein, J. T., Packer, A. M., Machado, T. a, Sippy, T., Babadi, B.,
+    Vogelstein, J. T., Packer, A. M., Machado, T. A., Sippy, T., Babadi, B.,
     Yuste, R., & Paninski, L. (2010). Fast nonnegative deconvolution for spike
     train inference from population calcium imaging. Journal of
     Neurophysiology, 104(6), 3691-704. doi:10.1152/jn.01073.2009
@@ -286,7 +286,7 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
     # initial estimate of spike probabilities (should be strictly non-negative)
     n = C[1:] - gamma * C[:-1]
-    # assert not np.any(n < 0), "negative spike probabilities"
+    # assert not np.any(n < EPS), "spike probabilities < EPS"
 
     # (predicted - actual) fluorescence
     res = F - (C + beta)
@@ -333,6 +333,7 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
                 # update spike probabilities
                 n = C_new[1:] - gamma * C_new[:-1]
+                # assert not np.any(n < EPS), "spike probabilities < EPS"
 
                 # (predicted - actual) fluorescence
                 res = F - (C_new + beta)
@@ -457,7 +458,7 @@ def _update_theta(n, C, F, theta, dt, learn_theta):
     return np.vstack((sigma, beta, lamb, gamma)).reshape(4, 1)
 
 
-def _init_theta(F, dt=0.02, hz=0.5, tau=0.5):
+def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
 
     orig_shape = F.shape
     F = np.atleast_2d(F)
@@ -479,7 +480,7 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=0.5):
     lamb = hz * np.ones(nc)
 
     # decay parameter (fraction of remaining fluorescence after one time step)
-    gamma = (1. - (dt / tau)) * np.ones(nc)  # vector
+    gamma = np.exp(-dt / tau) * np.ones(nc)  # vector
 
     return np.vstack((sigma, beta, lamb, gamma)).reshape(4, 1)
 
