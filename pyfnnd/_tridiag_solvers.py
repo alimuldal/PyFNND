@@ -4,6 +4,8 @@ from ctypes import byref
 from ctypes.util import find_library
 from numpy.ctypeslib import ndpointer
 
+import _cy_trisolve
+
 # try and find a LAPACK shared library
 for name in ('openblas', 'lapack'):
     libname = find_library(name)
@@ -22,12 +24,12 @@ _c_float_p = ctypes.POINTER(ctypes.c_float)
 _c_double_p = ctypes.POINTER(ctypes.c_double)
 
 
-def trisolve(dl, d, du, b, inplace=False):
+def trisolve(dl, d, du, b, inplace=False, force_cy=False):
     """
-    The tridiagonal matrix (Thomas) algorithm for solving tridiagonal systems
-    of equations:
+    A generalized version of the tridiagonal matrix (Thomas) algorithm for
+    solving tridiagonal systems of equations:
 
-        a_{i}x_{i-1} + b_{i}x_{i} + c_{i}x_{i+1} = y_{i}
+        a_{i}x_{i-k} + b_{i}x_{i} + c_{i}x_{i+k} = y_{i}
 
     in matrix form:
         Mx = b
@@ -36,12 +38,12 @@ def trisolve(dl, d, du, b, inplace=False):
 
     Arguments:
     -----------
-        dl: (n - 1,) vector
-            the lower diagonal of M
+        dl: (n - k,) vector
+            the kth lower diagonal of M
         d: (n,) vector
             the main diagonal of M
-        du: (n - 1,) vector
-            the upper diagonal of M
+        du: (n - k,) vector
+            the kth upper diagonal of M
         b: (n,) vector
             the result of Mx
         inplace:
@@ -63,17 +65,8 @@ def trisolve(dl, d, du, b, inplace=False):
             or d.shape[0] != b.shape[0]):
         raise ValueError('Invalid diagonal shapes')
 
+    k = d.shape[0] - dl.shape[0]
     bshape_in = b.shape
-
-    if b.ndim == 1:
-        # needs to be (ldb, nrhs)
-        b = b[:, None]
-
-    _n = ctypes.c_int(d.shape[0])
-    _nrhs = ctypes.c_int(b.shape[1])
-    _ldb = ctypes.c_int(b.shape[0])
-    _info = ctypes.c_int(1)
-
     rtype = np.result_type(dl, d, du, b)
 
     if not inplace:
@@ -87,6 +80,28 @@ def trisolve(dl, d, du, b, inplace=False):
     # order
     dl, d, du, b = (np.array(v, dtype=rtype, copy=False, order='F')
                     for v in (dl, d, du, b))
+
+    # use custom Cython implementation
+    if (k > 1) or force_cy:
+        _cy_trisolve.trisolve_offset(dl, d, du, b)
+
+    # use the LAPACK implementation
+    else:
+        _lapack_trisolve(dl, d, du, b, rtype)
+
+    return b.reshape(bshape_in)
+
+
+def _lapack_trisolve(dl, d, du, b, rtype):
+
+    if b.ndim == 1:
+        # needs to be (ldb, nrhs)
+        b = b[:, None]
+
+    _n = ctypes.c_int(d.shape[0])
+    _nrhs = ctypes.c_int(b.shape[1])
+    _ldb = ctypes.c_int(b.shape[0])
+    _info = ctypes.c_int(1)
 
     # b will now be modified in place to give the result
     if rtype == np.float32:
@@ -107,8 +122,6 @@ def trisolve(dl, d, du, b, inplace=False):
     else:
         raise ValueError('Unsupported result type: %s' % rtype)
 
-    return b.reshape(bshape_in)
-
 
 def bench_trisolve():
 
@@ -119,15 +132,17 @@ def bench_trisolve():
     N = np.logspace(2, 6, 5).astype(np.int)
     nreps = 5
 
+    k = 1
+
     dgtsv_times = []
     LU_times = []
 
     for n in N:
 
         d0 = np.random.randn(n)
-        d1 = np.random.randn(n - 1)
+        d1 = np.random.randn(n - k)
 
-        H = sparse.diags((d1, d0, d1), (-1, 0, 1), format='csc')
+        H = sparse.diags((d1, d0, d1), (-k, 0, k), format='csc')
         x = np.random.randn(n)
         g = H.dot(x)
 
@@ -144,8 +159,8 @@ def bench_trisolve():
         norm2 = np.linalg.norm(x - xhat)
 
         print "\nn = %i" % n
-        print "Time (sec):\tdgtsv: %g\tLU: %g" % (t1, t2)
-        print "||x - xhat||2:\tdgtsv: %g\tLU: %g" % (norm1, norm2)
+        print "Time (sec):\ttridiag: %g\tLU: %g" % (t1, t2)
+        print "||x - xhat||2:\ttridiag: %g\tLU: %g" % (norm1, norm2)
 
         dgtsv_times.append(t1)
         LU_times.append(t2)
