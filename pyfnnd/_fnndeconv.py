@@ -6,14 +6,13 @@ import warnings
 from _tridiag_solvers import trisolve
 
 DTYPE = np.float64
-FMT = 'csc'
 EPS = np.finfo(DTYPE).eps
+
+from scipy import sparse
 
 import ipdb
 from matplotlib import pyplot as plt
 plt.ion()
-
-from scipy import sparse
 
 
 # joblib is an optional dependency, required only for processing multiple cells
@@ -67,7 +66,7 @@ except ImportError:
     pass
 
 
-def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
+def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
                params_tol=1E-3, spikes_tol=1E-3, params_maxiter=10,
                spikes_maxiter=100, verbosity=0, plot=False):
     """
@@ -89,19 +88,20 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
 
     Arguments:
     ---------------------------------------------------------------------------
-    F: ndarray, [nt]
+    F: ndarray, [nt] or [npix, nt]
         measured fluorescence values
 
     C0: ndarray, [nt]
         initial estimate of the calcium concentration for each time bin.
 
-    theta0: len(4) sequence
-        initial estimates of the model parameters (sigma, beta, lambda, gamma).
+    theta0: len(5) sequence
+        initial estimates of the model parameters
+        (sigma, alpha, beta, lambda, gamma).
 
     dt: float scalar
         duration of each time bin (s)
 
-    learn_theta: len(4) bool sequence
+    learn_theta: len(5) bool sequence
         specifies which of the model parameters to attempt learn via pseudo-EM
         iterations. currently gamma cannot be optimised.
 
@@ -134,7 +134,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
     LL_best: float scalar
         posterior log-likelihood of F given n_best and theta_best
 
-    theta_best: len(4) tuple
+    theta_best: len(5) tuple
         model parameters, updated according to learn_theta
 
     Reference:
@@ -148,25 +148,27 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
 
     tstart = time.time()
 
-    nt = F.shape[0]
-
-    if theta0 is None:
-        theta_best = _init_theta(F, dt, hz=0.3, tau=0.5)
-    else:
-        theta_best = theta0
+    F = np.atleast_2d(F)
+    npix, nt = F.shape
 
     # scale F to be between 0 and 1
     offset = F.min()
     scale = F.max() - offset
     F = (F - offset) / scale
 
-    sigma, beta, lamb, gamma = theta_best
+    if theta0 is None:
+        theta_best = _init_theta(F, dt, hz=0.3, tau=0.5)
+    else:
+        theta_best = theta0
 
-    # apply scale and offset to beta and sigma
-    beta = (beta - offset) / scale
+    sigma, alpha, beta, lamb, gamma = theta_best
+
+    # apply scale and offset to alpha, beta and sigma
+    alpha = (alpha - offset) / scale
+    beta = (beta - offset) / scale        # beta absorbs the additive component
     sigma = sigma / scale
 
-    theta_best = np.vstack((sigma, beta, lamb, gamma))
+    theta_best = sigma, alpha, beta, lamb, gamma
 
     if C0 is None:
         C = _init_C(F, dt)
@@ -183,10 +185,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
     if np.any(learn_theta):
 
         if verbosity >= 1:
-            sigma, beta, lamb, gamma = theta_best
-            print('Params: iter=%3i; sigma=%6.4f, beta=%6.4f, '
-                  'lambda=%6.4f, gamma=%6.4f; LL=%12.2f; delta_LL= N/A'
-                  % (0, sigma, beta, lamb, gamma, LL_best))
+            print('Params: iter=%3i; LL=%12.2f; delta_LL= N/A' % (0, LL_best))
 
         n = n_best
         C = C_best
@@ -199,6 +198,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
 
             # update the parameter estimates
             theta1 = _update_theta(n, C, F, theta, dt, learn_theta)
+            ipdb.set_trace()
 
             # get the new n, C, and LL
             n1, C1, LL1 = _estimate_MAP_spikes(
@@ -210,12 +210,8 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
             delta_LL = -((LL1 - LL) / LL)
 
             if verbosity >= 1:
-                sigma, beta, lamb, gamma = theta1
-
-                print('Params: iter=%3i; sigma=%6.4f, beta=%6.4f, '
-                      'lambda=%6.4f, gamma=%6.4f; LL=%12.2f; delta_LL= %8.4g'
-                      % (nloop_params, sigma, beta, lamb, gamma, LL1,
-                          delta_LL))
+                print('Params: iter=%3i; LL=%12.2f; delta_LL= %8.4g'
+                      % (nloop_params, LL1, delta_LL))
 
             # if the LL improved, keep these parameters
             if LL1 > LL_best:
@@ -248,20 +244,19 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0),
         time_taken = time.time() - tstart
         print "Completed: %s" % _s2h(time_taken)
 
-    sigma, beta, lamb, gamma = theta_best
+    sigma, alpha, beta, lamb, gamma = theta_best
 
     # correct for the offset and scaling we originally applied to F
-    C_best *= scale
-    beta *= scale
-    beta += offset
-    sigma *= scale
+    alpha = (alpha * scale) + offset
+    beta = (beta * scale) + offset
+    sigma = sigma * scale
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
     # timebin, for convenience we just concatenate (lamb * dt) to the start of
     # n so that it has the same shape as F and C
-    n_best = np.concatenate((lamb * dt, n_best), axis=0)
+    n_best = np.r_[lamb * dt, n_best]
 
-    theta_best = np.hstack((sigma, beta, lamb, gamma))
+    theta_best = sigma, alpha, beta, lamb, gamma
 
     return n_best, C_best, LL_best, theta_best
 
@@ -277,21 +272,13 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     Returns:    n_best, C_best, LL_best
 
     """
+    npix, nt = F.shape
 
     sigma, alpha, beta, lamb, gamma = theta
-
-    npix, nt = F.shape
 
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
     lD = lamb * dt
-
-    # for debugging purposes only!
-    # -------------------------------------------------------------------------
-    d0 = np.repeat(-gamma, nt)
-    d1 = np.ones(nt)
-    M = sparse.dia_matrix(((d0, d1), (0, 1)), shape=(nt - 1, nt))
-    # -------------------------------------------------------------------------
 
     # used for computing the gradient (M.T.dot(LambdaDelta))
     grad_lnprior = np.zeros(nt, dtype=DTYPE)
@@ -303,7 +290,7 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     assert not np.any(n < EPS), "spike probabilities < EPS"
 
     # (actual - predicted) fluorescence
-    res = F - (C[None, :] * alpha[:, None]) + beta[:, None]
+    res = F - (C[None, :] * alpha[:, None] + beta[:, None])
 
     # initialize the weight of the barrier term to 1
     z = 1.
@@ -334,7 +321,9 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
             # ensure that s starts sufficiently small to guarantee that n
             # stays positive
             hit = n / (d[1:] - gamma * d[:-1])
-            s = min(1., 0.99 * np.min(hit[hit >= EPS]))
+            within_bounds = hit >= EPS
+            assert np.any(within_bounds)
+            s = min(1., 0.99 * np.min(hit[within_bounds]))
 
             nloop3 = 0
             terminate_linesearch = False
@@ -351,7 +340,7 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
                 assert not np.any(n < EPS), "spike probabilities < EPS"
 
                 # (predicted - actual) fluorescence
-                res = F - (C_new[None, :] * alpha[:, None]) + beta[:, None]
+                res = F - (C_new[None, :] * alpha[:, None] + beta[:, None])
 
                 # compute the new posterior log-likelihood
                 LL_new = _post_LL(n, res, scale_var, lD, z)
@@ -450,10 +439,19 @@ def _direction(n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z):
 
 def _update_theta(n, C, F, theta, dt, learn_theta):
 
-    sigma, beta, lamb, gamma = theta
-    learn_sigma, learn_beta, learn_lamb, learn_gamma = learn_theta
+    sigma, alpha, beta, lamb, gamma = theta
+    learn_sigma, learn_alpha, learn_beta, learn_lamb, learn_gamma = learn_theta
 
     nt = F.shape[0]
+
+    if learn_alpha:
+        A = np.vstack((C, np.ones(C.shape[0])))
+        Y, res, rank, s = np.linalg.lstsq(A.T, F.T)
+        alpha, beta = Y
+
+    elif learn_beta:
+        # this converges very slowly!
+        beta = np.sum(F - C) / nt
 
     if learn_sigma:
         res = F - (C + beta)
@@ -461,24 +459,20 @@ def _update_theta(n, C, F, theta, dt, learn_theta):
         res_ss = np.dot(res, res)       # faster sum of squares
         sigma = np.sqrt(res_ss / (nt * dt))  # RMS error
 
-    if learn_beta:
-        # this converges very slowly!
-        beta = np.sum(F - C) / nt
-
     if learn_lamb:
         lamb = np.sum(n) / (nt * dt)
 
     if learn_gamma:
         warnings.warn('optimising gamma is not yet supported')
 
-    return np.vstack((sigma, beta, lamb, gamma)).reshape(4, 1)
+    return (sigma, alpha, beta, lamb, gamma)
 
 
 def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
 
     orig_shape = F.shape
     F = np.atleast_2d(F)
-    nc, nt = F.shape
+    npix, nt = F.shape
 
     # K is the correction factor when using the median absolute deviation as a
     # robust estimator of the standard deviation of a normal distribution
@@ -487,18 +481,21 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
 
     # noise parameter
     abs_dev = np.abs(F - np.median(F, axis=1)[:, None])
-    sigma = np.median(abs_dev, axis=1) / K     # vector
+    sigma = np.median(abs_dev) / K          # scalar
+
+    # amplitude & baseline parameters
+    alpha = beta = np.median(F, axis=1)     # vector
 
     # baseline parameter
-    beta = _hist_mode(F, row_wise=True)     # vector
+    # beta = _hist_mode(F, row_wise=True)     # vector
 
     # rate parameter
-    lamb = hz * np.ones(nc)
+    lamb = hz                               # scalar
 
     # decay parameter (fraction of remaining fluorescence after one time step)
-    gamma = np.exp(-dt / tau) * np.ones(nc)  # vector
+    gamma = np.exp(-dt / tau)               # scalar
 
-    return np.vstack((sigma, beta, lamb, gamma)).reshape(4, 1)
+    return sigma, alpha, beta, lamb, gamma
 
 
 def _init_C(F, dt=0.02, avg_win=1.0):
@@ -509,43 +506,43 @@ def _init_C(F, dt=0.02, avg_win=1.0):
 
     orig_shape = F.shape
     F = np.atleast_2d(F)
-    nc, nt = F.shape
+    npix, nt = F.shape
 
     # boxcar filtering
     win_len = max(1, avg_win / dt)
     win = np.ones(win_len) / win_len
     C0 = ndimage.convolve1d(F, win, axis=1, mode='reflect')
 
-    return C0.reshape(orig_shape)
+    return C0.mean(0)
 
 
-def _hist_mode(F, row_wise=False, nbins=None):
-    """
-    estimate the baseline fluorescence value from the histogram mode
-    """
-    if row_wise:
-        F = np.atleast_2d(F)
+# def _hist_mode(F, row_wise=False, nbins=None):
+#     """
+#     estimate the baseline fluorescence value from the histogram mode
+#     """
+#     if row_wise:
+#         F = np.atleast_2d(F)
 
-        if nbins is None:
-            nbins = int(np.ceil(np.sqrt(F.shape[1])))
+#         if nbins is None:
+#             nbins = int(np.ceil(np.sqrt(F.shape[1])))
 
-        mode = []
+#         mode = []
 
-        for row in F:
-            counts, edges = np.histogram(row, bins=nbins)
-            idx = np.argmax(counts)
-            mode.append((edges[idx] + edges[idx + 1]) / 2.)
+#         for row in F:
+#             counts, edges = np.histogram(row, bins=nbins)
+#             idx = np.argmax(counts)
+#             mode.append((edges[idx] + edges[idx + 1]) / 2.)
 
-        return np.hstack(mode)
+#         return np.hstack(mode)
 
-    else:
-        if nbins is None:
-            nbins = int(np.ceil(np.sqrt(F.shape[0])))
+#     else:
+#         if nbins is None:
+#             nbins = int(np.ceil(np.sqrt(F.shape[0])))
 
-        counts, edges = np.histogram(F, bins=nbins)
-        idx = np.argmax(counts)
+#         counts, edges = np.histogram(F, bins=nbins)
+#         idx = np.argmax(counts)
 
-        return (edges[idx] + edges[idx + 1]) / 2.
+#         return (edges[idx] + edges[idx + 1]) / 2.
 
 
 def _s2h(ss):
