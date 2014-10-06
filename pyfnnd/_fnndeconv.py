@@ -9,6 +9,12 @@ DTYPE = np.float64
 FMT = 'csc'
 EPS = np.finfo(DTYPE).eps
 
+import ipdb
+from matplotlib import pyplot as plt
+plt.ion()
+
+from scipy import sparse
+
 
 # joblib is an optional dependency, required only for processing multiple cells
 # in parallel
@@ -272,24 +278,32 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
     """
 
-    sigma, beta, lamb, gamma = theta
-    nt = F.shape[0]
+    sigma, alpha, beta, lamb, gamma = theta
+
+    npix, nt = F.shape
 
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
     lD = lamb * dt
 
-    # used for computing the gradient
+    # for debugging purposes only!
+    # -------------------------------------------------------------------------
+    d0 = np.repeat(-gamma, nt)
+    d1 = np.ones(nt)
+    M = sparse.dia_matrix(((d0, d1), (0, 1)), shape=(nt - 1, nt))
+    # -------------------------------------------------------------------------
+
+    # used for computing the gradient (M.T.dot(LambdaDelta))
     grad_lnprior = np.zeros(nt, dtype=DTYPE)
     grad_lnprior[1:] = lD
-    grad_lnprior[:-1] -= gamma * lD
+    grad_lnprior[:-1] += lD * - gamma
 
     # initial estimate of spike probabilities (should be strictly non-negative)
     n = C[1:] - gamma * C[:-1]
-    # assert not np.any(n < EPS), "spike probabilities < EPS"
+    assert not np.any(n < EPS), "spike probabilities < EPS"
 
-    # (predicted - actual) fluorescence
-    res = F - (C + beta)
+    # (actual - predicted) fluorescence
+    res = F - (C[None, :] * alpha[:, None]) + beta[:, None]
 
     # initialize the weight of the barrier term to 1
     z = 1.
@@ -314,7 +328,8 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
         while (np.linalg.norm(d) > 1E-1) and (s > 1E-3):
 
             # compute direction of newton step
-            d = _direction(n, res, sigma, gamma, scale_var, grad_lnprior, z)
+            d = _direction(
+                n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z)
 
             # ensure that s starts sufficiently small to guarantee that n
             # stays positive
@@ -333,10 +348,10 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
                 # update spike probabilities
                 n = C_new[1:] - gamma * C_new[:-1]
-                # assert not np.any(n < EPS), "spike probabilities < EPS"
+                assert not np.any(n < EPS), "spike probabilities < EPS"
 
                 # (predicted - actual) fluorescence
-                res = F - (C_new + beta)
+                res = F - (C_new[None, :] * alpha[:, None]) + beta[:, None]
 
                 # compute the new posterior log-likelihood
                 LL_new = _post_LL(n, res, scale_var, lD, z)
@@ -398,8 +413,9 @@ def _post_LL(n, res, scale_var, lD, z):
         barrier = np.log(n).sum()       # this is currently a bottleneck
 
     # sum of squared (predicted - actual) fluorescence
-    # res_ss = np.sum(res ** 2)
-    res_ss = np.dot(res, res)       # faster sum of squares
+    res_ss = np.sum(res ** 2)
+    # # faster sum-of-squares provided that res.dot(res) is not too big
+    # res_ss = np.dot(res, res)
 
     # weighted posterior log-likelihood of the fluorescence
     LL = -scale_var * res_ss - n.sum() * lD + z * barrier
@@ -407,21 +423,21 @@ def _post_LL(n, res, scale_var, lD, z):
     return LL
 
 
-def _direction(n, res, sigma, gamma, scale_var, grad_lnprior, z):
+def _direction(n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z):
 
     # gradient
-    n_term = np.zeros_like(res)
+    n_term = np.zeros(res.shape[1])
     n_term[:n.shape[0]] = -gamma / n
     n_term[-n.shape[0]:] += 1. / n
-    g = 2 * scale_var * res - grad_lnprior + z * n_term
+    g = (2 * scale_var * res.T.dot(alpha) - grad_lnprior + z * n_term)
 
     # main diagonal of the hessian
     n2 = n ** 2
-    Hd0 = np.zeros_like(g)
+    Hd0 = np.zeros(g.shape[0])
     Hd0[:n.shape[0]] = gamma ** 2 / n2
     Hd0[-n.shape[0]:] += 1 / n2
     Hd0 *= -z
-    Hd0 += -1. / sigma ** 2
+    Hd0 += -alpha.dot(alpha) / sigma ** 2
 
     # upper/lower diagonals of the hessian
     Hd1 = z * gamma / n2
