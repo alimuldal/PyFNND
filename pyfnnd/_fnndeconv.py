@@ -152,7 +152,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     npix, nt = F.shape
 
     # scale and offset parameters to scale F to be between 0 and 1
-    offset = F.min()
+    offset = F.min() - EPS
     scale = F.max() - offset
 
     if theta0 is None:
@@ -162,16 +162,15 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     sigma, alpha, beta, lamb, gamma = theta_best
 
-    # # apply scale and offset to alpha, beta and sigma
-    # alpha = (alpha - offset) / scale
-    # beta = (beta - offset) / scale        # beta absorbs the additive component
-    # sigma = sigma / scale
+    # apply scale and offset to alpha, beta and sigma
+    alpha = alpha / scale
+    beta = (beta - offset) / scale        # beta absorbs the additive component
+    sigma = sigma / scale
 
     theta_best = sigma, alpha, beta, lamb, gamma
 
     # apply the scaling/offset
-    # F = F - offset
-    # F = (F - offset) / scale
+    F = (F - offset) / scale
 
     if C0 is None:
         C = _init_C(F, dt)
@@ -201,7 +200,6 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
             # update the parameter estimates
             theta1 = _update_theta(n, C, F, theta, dt, learn_theta)
-            ipdb.set_trace()
 
             # get the new n, C, and LL
             n1, C1, LL1 = _estimate_MAP_spikes(
@@ -249,10 +247,10 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     sigma, alpha, beta, lamb, gamma = theta_best
 
-    # # correct for the offset and scaling we originally applied to F
-    # alpha = (alpha * scale) + offset
-    # beta = (beta * scale) + offset
-    # sigma = sigma * scale
+    # correct for the offset and scaling we originally applied to F
+    alpha = alpha * scale
+    beta = (beta * scale) + offset
+    sigma = sigma * scale
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
     # timebin, for convenience we just concatenate (lamb * dt) to the start of
@@ -332,7 +330,7 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
             # ensure that s starts sufficiently small to guarantee that n
             # stays positive
-            hit = n / (d[1:] - gamma * d[:-1])
+            hit = -n / (d[1:] - gamma * d[:-1])
             within_bounds = hit >= EPS
             assert np.any(within_bounds)
             s = min(1., 0.99 * np.min(hit[within_bounds]))
@@ -349,7 +347,9 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
                 # update spike probabilities
                 n = C_new[1:] - gamma * C_new[:-1]
-                assert not np.any(n < EPS), "spike probabilities < EPS"
+                # assert not np.any(n < EPS), "spike probabilities < EPS"
+                if np.any(n < EPS):
+                    ipdb.set_trace()
 
                 # (predicted - actual) fluorescence
                 res = F - (C_new[None, :] * alpha[:, None] + beta[:, None])
@@ -466,8 +466,8 @@ def _direction(n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z):
     # upper/lower diagonals of the hessian
     Hd1 = z * gamma / n2
 
-    # solve the tridiagonal system Hd = -g (we use -g, since we want to *qascend*
-    # the LL gradient)
+    # solve the tridiagonal system Hd = -g (we use -g, since we want to
+    # *ascend* the LL gradient)
     d = trisolve(Hd1, Hd0, Hd1.copy(), -g, inplace=True)
 
     return g, d
@@ -499,7 +499,6 @@ def _direction(n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z):
 #     d = sparse.linalg.spsolve(H, -g)
 
 #     return g, d
-
 
 
 def _update_theta(n, C, F, theta, dt, learn_theta):
