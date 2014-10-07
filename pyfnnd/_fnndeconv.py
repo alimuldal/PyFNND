@@ -151,10 +151,9 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     F = np.atleast_2d(F)
     npix, nt = F.shape
 
-    # scale F to be between 0 and 1
+    # scale and offset parameters to scale F to be between 0 and 1
     offset = F.min()
     scale = F.max() - offset
-    F = (F - offset) / scale
 
     if theta0 is None:
         theta_best = _init_theta(F, dt, hz=0.3, tau=0.5)
@@ -163,12 +162,16 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     sigma, alpha, beta, lamb, gamma = theta_best
 
-    # apply scale and offset to alpha, beta and sigma
-    alpha = (alpha - offset) / scale
-    beta = (beta - offset) / scale        # beta absorbs the additive component
-    sigma = sigma / scale
+    # # apply scale and offset to alpha, beta and sigma
+    # alpha = (alpha - offset) / scale
+    # beta = (beta - offset) / scale        # beta absorbs the additive component
+    # sigma = sigma / scale
 
     theta_best = sigma, alpha, beta, lamb, gamma
+
+    # apply the scaling/offset
+    # F = F - offset
+    # F = (F - offset) / scale
 
     if C0 is None:
         C = _init_C(F, dt)
@@ -246,10 +249,10 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     sigma, alpha, beta, lamb, gamma = theta_best
 
-    # correct for the offset and scaling we originally applied to F
-    alpha = (alpha * scale) + offset
-    beta = (beta * scale) + offset
-    sigma = sigma * scale
+    # # correct for the offset and scaling we originally applied to F
+    # alpha = (alpha * scale) + offset
+    # beta = (beta * scale) + offset
+    # sigma = sigma * scale
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
     # timebin, for convenience we just concatenate (lamb * dt) to the start of
@@ -280,6 +283,11 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     scale_var = 1. / (2 * sigma ** 2)
     lD = lamb * dt
 
+    # debugging
+    d0 = np.ones(nt) * - gamma
+    d1 = np.ones(nt)
+    M = sparse.dia_matrix(((d0, d1), (0, 1)), shape=(nt - 1, nt))
+
     # used for computing the gradient (M.T.dot(LambdaDelta))
     grad_lnprior = np.zeros(nt, dtype=DTYPE)
     grad_lnprior[1:] = lD
@@ -297,6 +305,8 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
     # compute initial posterior log-likelihood of the fluorescence
     LL = _post_LL(n, res, scale_var, lD, z)
+    # LL2 = _post_LL_matrix(F, M, C, sigma, alpha, beta, lamb, dt, z)
+    # ipdb.set_trace()
 
     nloop1 = 0
     LL_prev = LL
@@ -315,8 +325,10 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
         while (np.linalg.norm(d) > 1E-1) and (s > 1E-3):
 
             # compute direction of newton step
-            d = _direction(
+            g, d = _direction(
                 n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z)
+            # g2, d2 = _direction_matrix(F, M, C, alpha, beta, sigma, lamb, dt, z)
+            # ipdb.set_trace()
 
             # ensure that s starts sufficiently small to guarantee that n
             # stays positive
@@ -407,9 +419,32 @@ def _post_LL(n, res, scale_var, lD, z):
     # res_ss = np.dot(res, res)
 
     # weighted posterior log-likelihood of the fluorescence
-    LL = -scale_var * res_ss - n.sum() * lD + z * barrier
+    LL = -(scale_var * res_ss) - (n.sum() * lD) + (z * barrier)
 
     return LL
+
+# def _post_LL_matrix(F, M, C, sigma, alpha, beta, lamb, dt, z):
+#     """
+#     The posterior log-likelihood calculation, as set out in the paper. Should
+#     give the same result as _post_LL
+#     """
+
+#     npix, nt = F.shape
+
+#     # predicted fluorescence
+#     F_pred = alpha[:, None] * C[None, :] + beta[:, None]
+
+#     # residual sum-of-squares
+#     res = F - F_pred
+#     res_ss = np.sum(res ** 2)
+
+#     One = np.ones(nt - 1)
+#     LD = One * lamb * dt
+#     n = M.dot(C)
+
+#     LL = -1 / (2 * sigma ** 2) * res_ss - n.T.dot(LD) + z * np.log(n).dot(One)
+
+#     return LL
 
 
 def _direction(n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z):
@@ -431,10 +466,40 @@ def _direction(n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z):
     # upper/lower diagonals of the hessian
     Hd1 = z * gamma / n2
 
-    # solve the tridiagonal system Hd = -g
+    # solve the tridiagonal system Hd = -g (we use -g, since we want to *qascend*
+    # the LL gradient)
     d = trisolve(Hd1, Hd0, Hd1.copy(), -g, inplace=True)
 
-    return d
+    return g, d
+
+
+# def _direction_matrix(F, M, C, alpha, beta, sigma, lamb, dt, z):
+
+#     npix, nt = F.shape
+
+#     # predicted fluorescence
+#     F_pred = alpha[:, None] * C[None, :] + beta[:, None]
+
+#     # residual sum-of-squares
+#     res = F - F_pred
+
+#     One = np.ones(nt - 1)
+#     LD = One * lamb * dt
+#     n = M.dot(C)
+
+#     # gradient
+#     g = res.T.dot(alpha.T / (sigma ** 2)) - M.T.dot(LD) + z * M.T.dot(1. / n)
+#     # the gradient calculation seems to be fine...
+
+#     I = np.eye(nt)
+
+#     # Hessian
+#     H = -((alpha.dot(alpha.T)) / (sigma ** 2)) * I - z * M.T.dot(np.diag(n ** -2.)).dot(M)
+
+#     d = sparse.linalg.spsolve(H, -g)
+
+#     return g, d
+
 
 
 def _update_theta(n, C, F, theta, dt, learn_theta):
