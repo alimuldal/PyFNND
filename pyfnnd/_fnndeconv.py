@@ -8,7 +8,6 @@ from _tridiag_solvers import trisolve
 DTYPE = np.float64
 EPS = np.finfo(DTYPE).eps
 
-from scipy import sparse
 
 import ipdb
 from matplotlib import pyplot as plt
@@ -38,14 +37,14 @@ try:
 
         Returns:
         -----------------------------------------------------------------------
-        n_best: ndarray, [nc, nt]
+        n_hat_best: ndarray, [nc, nt]
             MAP estimate of the most likely spike train
 
-        C_best: ndarray, [nc, nt]
+        C_hat_best: ndarray, [nc, nt]
             estimated intracellular calcium concentration (A.U.)
 
-        LL_best: ndarray, [nc,]
-            posterior log-likelihood of F given n_best and theta_best
+        LL: ndarray, [nc,]
+            posterior log-likelihood of F given n_hat_best and theta_best
 
         theta_best: ndarray, [nc, 4]
             model parameters, updated according to learn_theta
@@ -58,16 +57,16 @@ try:
 
         results = pool(delayed(deconvolve)
                        (rr, *fnn_args, **fnn_kwargs) for rr in F)
-        n, C, LL, theta = (np.vstack(a) for a in izip(*results))
+        n_hat, C_hat, LL, theta = (np.vstack(a) for a in izip(*results))
 
-        return n, C, LL, theta
+        return n_hat, C_hat, LL, theta
 
 except ImportError:
     pass
 
 
 def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
-               params_tol=1E-3, spikes_tol=1E-3, params_maxiter=10,
+               params_tol=1E-6, spikes_tol=1E-6, params_maxiter=20,
                spikes_maxiter=100, verbosity=0, plot=False):
     """
     Fast Non-Negative Deconvolution
@@ -75,10 +74,10 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     This function uses an interior point method to solve the following
     optimization problem:
 
-        n_best = argmax_{n >= 0} P(n | F)
+        n_hat = argmax_{n >= 0} P(n | F)
 
-    where n_best is a maximum a posteriori estimate for the most likely spike
-    train, given the fluorescence signal F, and the model:
+    where n_hat_best is a maximum a posteriori estimate for the most likely
+    spike train, given the fluorescence signal F, and the model:
 
     C_{t} = gamma * C_{t-1} + n_{t},            n_{t} ~ Poisson(lambda * dt)
     F_{t} = C_{t} + beta + epsilon,             epsilon ~ N(0, sigma)
@@ -125,14 +124,14 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     Returns:
     ---------------------------------------------------------------------------
-    n_best: ndarray, [nt]
+    n_hat_best: ndarray, [nt]
         MAP estimate of the most likely spike train
 
-    C_best: ndarray, [nt]
+    C_hat_best: ndarray, [nt]
         estimated intracellular calcium concentration (A.U.)
 
     LL_best: float scalar
-        posterior log-likelihood of F given n_best and theta_best
+        posterior log-likelihood of F given n_hat_best and theta_best
 
     theta_best: len(5) tuple
         model parameters, updated according to learn_theta
@@ -156,30 +155,30 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     scale = F.max() - offset
 
     if theta0 is None:
-        theta_best = _init_theta(F, dt, hz=0.3, tau=0.5)
+        theta = _init_theta(F, dt, hz=0.3, tau=0.5)
     else:
-        theta_best = theta0
+        theta = theta0
 
-    sigma, alpha, beta, lamb, gamma = theta_best
+    sigma, alpha, beta, lamb, gamma = theta
 
     # apply scale and offset to alpha, beta and sigma
     alpha = alpha / scale
     beta = (beta - offset) / scale        # beta absorbs the additive component
     sigma = sigma / scale
 
-    theta_best = sigma, alpha, beta, lamb, gamma
+    theta = sigma, alpha, beta, lamb, gamma
 
     # apply the scaling/offset
     F = (F - offset) / scale
 
     if C0 is None:
-        C = _init_C(F, dt)
+        C_hat = _init_C(F, dt)
     else:
-        C = C0
+        C_hat = C0
 
     # if we're not learning the parameters, this step is all we need to do
-    n_best, C_best, LL_best = _estimate_MAP_spikes(
-        F, C, theta_best, dt, spikes_tol, spikes_maxiter,
+    n_hat, C_hat, LL = _estimate_MAP_spikes(
+        F, C_hat, theta, dt, spikes_tol, spikes_maxiter,
         verbosity
     )
 
@@ -187,23 +186,19 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     if np.any(learn_theta):
 
         if verbosity >= 1:
-            print('Params: iter=%3i; LL=%12.2f; delta_LL= N/A' % (0, LL_best))
+            print('Params: iter=%3i; LL=%12.2f; delta_LL= N/A' % (0, LL))
 
-        n = n_best
-        C = C_best
-        LL = LL_best
-        theta = theta_best
         nloop_params = 1
         done = False
 
         while not done:
 
             # update the parameter estimates
-            theta1 = _update_theta(n, C, F, theta, dt, learn_theta)
+            theta1 = _update_theta(n_hat, C_hat, F, theta, dt, learn_theta)
 
-            # get the new n, C, and LL
-            n1, C1, LL1 = _estimate_MAP_spikes(
-                F, C, theta1, dt, spikes_tol,
+            # get the new n_hat, C_hat, and LL
+            n1, C_hat1, LL1 = _estimate_MAP_spikes(
+                F, C_hat, theta1, dt, spikes_tol,
                 spikes_maxiter, verbosity
             )
 
@@ -214,38 +209,39 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
                 print('Params: iter=%3i; LL=%12.2f; delta_LL= %8.4g'
                       % (nloop_params, LL1, delta_LL))
 
-            # if the LL improved, keep these parameters
-            if LL1 > LL_best:
-                n_best, C_best, LL_best, theta_best = (
-                    n1, C1, LL1, theta1)
+            # if the LL improved or stayed the same, keep these parameters
+            if LL1 >= LL:
+                n_hat, C_hat, LL, theta = n1, C_hat1, LL1, theta1
 
-            if (np.abs(delta_LL) < params_tol):
-                if verbosity >= 1:
-                    print("Parameters converged after %i iterations"
-                          % (nloop_params))
-                    print "Last delta log-likelihood:\t%8.4g" % delta_LL
-                    print "Best posterior log-likelihood:\t%11.4f" % (
-                        LL_best)
-                done = True
+                # check the other termination conditions
+                if (np.abs(delta_LL) < params_tol):
+                    if verbosity >= 1:
+                        print("Parameters converged after %i iterations"
+                              % (nloop_params))
+                        print "Last delta log-likelihood:\t%8.4g" % delta_LL
+                        print "Best posterior log-likelihood:\t%11.4f" % (
+                            LL)
+                    done = True
 
-            elif delta_LL < 0:
+                elif nloop_params > params_maxiter:
+                    if verbosity >= 1:
+                        print 'Solution failed to converge before maxiter'
+                    done = True
+
+            # otherwise terminate
+            else:
                 if verbosity >= 1:
                     print 'Terminating because solution is diverging'
                 done = True
 
-            elif nloop_params > params_maxiter:
-                if verbosity >= 1:
-                    print 'Solution failed to converge before maxiter'
-                done = True
-
-            n, C, LL, theta = n1, C1, LL1, theta1
+            # increment the loop counter
             nloop_params += 1
 
     if verbosity >= 1:
         time_taken = time.time() - tstart
         print "Completed: %s" % _s2h(time_taken)
 
-    sigma, alpha, beta, lamb, gamma = theta_best
+    sigma, alpha, beta, lamb, gamma = theta
 
     # correct for the offset and scaling we originally applied to F
     alpha = alpha * scale
@@ -254,15 +250,15 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
     # timebin, for convenience we just concatenate (lamb * dt) to the start of
-    # n so that it has the same shape as F and C
-    n_best = np.r_[lamb * dt, n_best]
+    # n_hat so that it has the same shape as F and C_hat
+    n_hat = np.r_[lamb * dt, n_hat]
 
-    theta_best = sigma, alpha, beta, lamb, gamma
+    theta = sigma, alpha, beta, lamb, gamma
 
-    return n_best, C_best, LL_best, theta_best
+    return n_hat, C_hat, LL, theta
 
 
-def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
+def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     """
     Used internally by deconvolve to compute the maximum a posteriori
     spike train for a given set of fluorescence traces and model parameters.
@@ -270,21 +266,23 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     See the documentation for deconvolve for the meaning of the
     arguments
 
-    Returns:    n_best, C_best, LL_best
+    Returns:    n_hat_best, C_hat_best, LL_best
 
     """
     npix, nt = F.shape
 
     sigma, alpha, beta, lamb, gamma = theta
 
+    # project the background-subtracted fluorescence movie onto the spatial
+    # filter to get the estimated 'calcium concentration'. by reducing the
+    # [npix, nt] movie to a single [nt,] vector we speed up the processing a
+    # lot!
+    C = (1. / alpha).dot(F - beta[:, None]) / npix
+    # C = ((F - beta[:, None]) / alpha[:, None]).mean(0)  # equivalent
+
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
     lD = lamb * dt
-
-    # debugging
-    d0 = np.ones(nt) * - gamma
-    d1 = np.ones(nt)
-    M = sparse.dia_matrix(((d0, d1), (0, 1)), shape=(nt - 1, nt))
 
     # used for computing the gradient (M.T.dot(LambdaDelta))
     grad_lnprior = np.zeros(nt, dtype=DTYPE)
@@ -292,23 +290,21 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     grad_lnprior[:-1] += lD * - gamma
 
     # initial estimate of spike probabilities (should be strictly non-negative)
-    n = C[1:] - gamma * C[:-1]
-    assert not np.any(n < EPS), "spike probabilities < EPS"
+    n_hat = C_hat[1:] - gamma * C_hat[:-1]
+    # assert not np.any(n_hat < EPS), "spike probabilities < EPS"
 
-    # (actual - predicted) fluorescence
-    res = F - (C[None, :] * alpha[:, None] + beta[:, None])
+    # (actual - predicted) calcium
+    res = C - C_hat
 
     # initialize the weight of the barrier term to 1
     z = 1.
 
     # compute initial posterior log-likelihood of the fluorescence
-    LL = _post_LL(n, res, scale_var, lD, z)
-    # LL2 = _post_LL_matrix(F, M, C, sigma, alpha, beta, lamb, dt, z)
-    # ipdb.set_trace()
+    LL = _post_LL(n_hat, res, scale_var, lD, z)
 
     nloop1 = 0
     LL_prev = LL
-    C_prev = C
+    C_hat_prev = C_hat
     terminate_interior = False
 
     # in the outer loop we'll progressively reduce the weight of the barrier
@@ -320,19 +316,17 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
         nloop2 = 0
 
         # converge for this barrier weight
-        while (np.linalg.norm(d) > 1E-1) and (s > 1E-3):
+        while (np.linalg.norm(d) > 5E-2) and (s > 1E-3):
 
             # compute direction of newton step
-            g, d = _direction(
-                n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z)
-            # g2, d2 = _direction_matrix(F, M, C, alpha, beta, sigma, lamb, dt, z)
-            # ipdb.set_trace()
+            d = _direction(n_hat, res, sigma, gamma, scale_var,
+                           grad_lnprior, z)
 
-            # ensure that s starts sufficiently small to guarantee that n
+            # ensure that s starts sufficiently small to guarantee that n_hat
             # stays positive
-            hit = -n / (d[1:] - gamma * d[:-1])
+            hit = -n_hat / (d[1:] - gamma * d[:-1])
             within_bounds = hit >= EPS
-            assert np.any(within_bounds)
+            # assert np.any(within_bounds)
             s = min(1., 0.99 * np.min(hit[within_bounds]))
 
             nloop3 = 0
@@ -343,25 +337,23 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
             while not terminate_linesearch:
 
                 # update estimated calcium
-                C_new = C + (s * d)
+                C_hat1 = C_hat + (s * d)
 
                 # update spike probabilities
-                n = C_new[1:] - gamma * C_new[:-1]
-                # assert not np.any(n < EPS), "spike probabilities < EPS"
-                if np.any(n < EPS):
-                    ipdb.set_trace()
+                n_hat = C_hat1[1:] - gamma * C_hat1[:-1]
+                # assert not np.any(n_hat < EPS), "spike probabilities < EPS"
 
                 # (predicted - actual) fluorescence
-                res = F - (C_new[None, :] * alpha[:, None] + beta[:, None])
+                res = C - C_hat1
 
                 # compute the new posterior log-likelihood
-                LL_new = _post_LL(n, res, scale_var, lD, z)
-                # assert not np.any(np.isnan(LL_new)), "nan LL"
+                LL1 = _post_LL(n_hat, res, scale_var, lD, z)
+                # assert not np.any(np.isnan(LL1)), "nan LL"
 
-                # only update C & LL if LL improved
-                if LL_new > LL:
-                    LL = LL_new
-                    C = C_new
+                # only update C_hat & LL if LL improved
+                if LL1 > LL:
+                    LL = LL1
+                    C_hat = C_hat1
                     terminate_linesearch = True
 
                 # terminate when the step size is essentially zero but we're
@@ -398,70 +390,46 @@ def _estimate_MAP_spikes(F, C, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
                 print 'MAP spike train failed to converge within maxiter'
             terminate_interior = True
 
-        LL_prev, C_prev = LL, C
+        LL_prev, C_hat_prev = LL, C_hat
 
         # increment the outer loop counter, reduce the barrier weight
         nloop1 += 1
         z /= 10.
 
-    return n, C, LL
+    return n_hat, C_hat, LL
 
 
-def _post_LL(n, res, scale_var, lD, z):
+def _post_LL(n_hat, res, scale_var, lD, z):
 
     # barrier term
     with np.errstate(invalid='ignore'):
-        barrier = np.log(n).sum()       # this is currently a bottleneck
+        barrier = np.log(n_hat).sum()       # this is currently a bottleneck
 
     # sum of squared (predicted - actual) fluorescence
-    res_ss = np.sum(res ** 2)
-    # # faster sum-of-squares provided that res.dot(res) is not too big
-    # res_ss = np.dot(res, res)
+    res_ss = res.dot(res)                   # faster when res is 1D
+    # res_ss = np.sum(res ** 2)
 
     # weighted posterior log-likelihood of the fluorescence
-    LL = -(scale_var * res_ss) - (n.sum() * lD) + (z * barrier)
+    LL = -(scale_var * res_ss) - (n_hat.sum() * lD) + (z * barrier)
 
     return LL
 
-# def _post_LL_matrix(F, M, C, sigma, alpha, beta, lamb, dt, z):
-#     """
-#     The posterior log-likelihood calculation, as set out in the paper. Should
-#     give the same result as _post_LL
-#     """
 
-#     npix, nt = F.shape
-
-#     # predicted fluorescence
-#     F_pred = alpha[:, None] * C[None, :] + beta[:, None]
-
-#     # residual sum-of-squares
-#     res = F - F_pred
-#     res_ss = np.sum(res ** 2)
-
-#     One = np.ones(nt - 1)
-#     LD = One * lamb * dt
-#     n = M.dot(C)
-
-#     LL = -1 / (2 * sigma ** 2) * res_ss - n.T.dot(LD) + z * np.log(n).dot(One)
-
-#     return LL
-
-
-def _direction(n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z):
+def _direction(n_hat, res, sigma, gamma, scale_var, grad_lnprior, z):
 
     # gradient
-    n_term = np.zeros(res.shape[1])
-    n_term[:n.shape[0]] = -gamma / n
-    n_term[-n.shape[0]:] += 1. / n
-    g = (2 * scale_var * res.T.dot(alpha) - grad_lnprior + z * n_term)
+    n_term = np.zeros_like(res)
+    n_term[:n_hat.shape[0]] = -gamma / n_hat
+    n_term[-n_hat.shape[0]:] += 1. / n_hat
+    g = (2 * scale_var * res - grad_lnprior + z * n_term)
 
     # main diagonal of the hessian
-    n2 = n ** 2
-    Hd0 = np.zeros(g.shape[0])
-    Hd0[:n.shape[0]] = gamma ** 2 / n2
-    Hd0[-n.shape[0]:] += 1 / n2
+    n2 = n_hat ** 2
+    Hd0 = np.zeros_like(g)
+    Hd0[:n_hat.shape[0]] = gamma ** 2 / n2
+    Hd0[-n_hat.shape[0]:] += 1 / n2
     Hd0 *= -z
-    Hd0 += -alpha.dot(alpha) / sigma ** 2
+    Hd0 += -1 / sigma ** 2
 
     # upper/lower diagonals of the hessian
     Hd1 = z * gamma / n2
@@ -470,66 +438,49 @@ def _direction(n, res, alpha, sigma, gamma, scale_var, grad_lnprior, z):
     # *ascend* the LL gradient)
     d = trisolve(Hd1, Hd0, Hd1.copy(), -g, inplace=True)
 
-    return g, d
+    return d
 
 
-# def _direction_matrix(F, M, C, alpha, beta, sigma, lamb, dt, z):
-
-#     npix, nt = F.shape
-
-#     # predicted fluorescence
-#     F_pred = alpha[:, None] * C[None, :] + beta[:, None]
-
-#     # residual sum-of-squares
-#     res = F - F_pred
-
-#     One = np.ones(nt - 1)
-#     LD = One * lamb * dt
-#     n = M.dot(C)
-
-#     # gradient
-#     g = res.T.dot(alpha.T / (sigma ** 2)) - M.T.dot(LD) + z * M.T.dot(1. / n)
-#     # the gradient calculation seems to be fine...
-
-#     I = np.eye(nt)
-
-#     # Hessian
-#     H = -((alpha.dot(alpha.T)) / (sigma ** 2)) * I - z * M.T.dot(np.diag(n ** -2.)).dot(M)
-
-#     d = sparse.linalg.spsolve(H, -g)
-
-#     return g, d
-
-
-def _update_theta(n, C, F, theta, dt, learn_theta):
+def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
 
     sigma, alpha, beta, lamb, gamma = theta
     learn_sigma, learn_alpha, learn_beta, learn_lamb, learn_gamma = learn_theta
 
-    nt = F.shape[0]
+    npix, nt = F.shape
 
     if learn_alpha:
-        A = np.vstack((C, np.ones(C.shape[0])))
-        Y, res, rank, s = np.linalg.lstsq(A.T, F.T)
-        alpha, beta = Y
+        A = np.vstack((C_hat, np.ones(C_hat.shape[0])))
+        Y, residuals, rank, s = np.linalg.lstsq(A.T, F.T)
+        alpha1, beta1 = Y
 
     elif learn_beta:
         # this converges very slowly!
-        beta = np.sum(F - C) / nt
+        beta1 = np.sum(F - C_hat) / nt
+        alpha1 = alpha
+
+    else:
+        alpha1, beta1 = alpha, beta
 
     if learn_sigma:
-        res = F - (C + beta)
+        C = (1. / alpha).dot(F - beta[:, None]) / npix
+        res = C - C_hat
         # res_ss = np.sum(res ** 2)
-        res_ss = np.dot(res, res)       # faster sum of squares
-        sigma = np.sqrt(res_ss / (nt * dt))  # RMS error
+        res_ss = res.dot(res)                   # faster sum of squares
+        sigma1 = np.sqrt(res_ss / (nt * dt))     # RMS error
+    else:
+        sigma1 = sigma
 
     if learn_lamb:
-        lamb = np.sum(n) / (nt * dt)
+        lamb1 = np.sum(n_hat) / (nt * dt)
+    else:
+        lamb1 = lamb
 
     if learn_gamma:
-        warnings.warn('optimising gamma is not yet supported')
+        warnings.warn('optimising gamma is not yet supported (ignoring)')
 
-    return (sigma, alpha, beta, lamb, gamma)
+    gamma1 = gamma
+
+    return (sigma1, alpha1, beta1, lamb1, gamma1)
 
 
 def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
@@ -549,9 +500,6 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
 
     # amplitude & baseline parameters
     alpha = beta = np.median(F, axis=1)     # vector
-
-    # baseline parameter
-    # beta = _hist_mode(F, row_wise=True)     # vector
 
     # rate parameter
     lamb = hz                               # scalar
@@ -578,35 +526,6 @@ def _init_C(F, dt=0.02, avg_win=1.0):
     C0 = ndimage.convolve1d(F, win, axis=1, mode='reflect')
 
     return C0.mean(0)
-
-
-# def _hist_mode(F, row_wise=False, nbins=None):
-#     """
-#     estimate the baseline fluorescence value from the histogram mode
-#     """
-#     if row_wise:
-#         F = np.atleast_2d(F)
-
-#         if nbins is None:
-#             nbins = int(np.ceil(np.sqrt(F.shape[1])))
-
-#         mode = []
-
-#         for row in F:
-#             counts, edges = np.histogram(row, bins=nbins)
-#             idx = np.argmax(counts)
-#             mode.append((edges[idx] + edges[idx + 1]) / 2.)
-
-#         return np.hstack(mode)
-
-#     else:
-#         if nbins is None:
-#             nbins = int(np.ceil(np.sqrt(F.shape[0])))
-
-#         counts, edges = np.histogram(F, bins=nbins)
-#         idx = np.argmax(counts)
-
-#         return (edges[idx] + edges[idx + 1]) / 2.
 
 
 def _s2h(ss):
