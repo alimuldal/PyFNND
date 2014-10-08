@@ -150,9 +150,9 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     F = np.atleast_2d(F)
     npix, nt = F.shape
 
-    # scale and offset parameters to scale F to be between 0 and 1
+    # ensure that C_hat is non-negative
     offset = F.min() - EPS
-    scale = F.max() - offset
+    F = F - offset
 
     if theta0 is None:
         theta = _init_theta(F, dt, hz=0.3, tau=0.5)
@@ -161,24 +161,19 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     sigma, alpha, beta, lamb, gamma = theta
 
-    # apply scale and offset to alpha, beta and sigma
-    alpha = alpha / scale
-    beta = (beta - offset) / scale        # beta absorbs the additive component
-    sigma = sigma / scale
-
-    theta = sigma, alpha, beta, lamb, gamma
-
-    # apply the scaling/offset
-    F = (F - offset) / scale
-
     if C0 is None:
-        C_hat = _init_C(F, dt)
-    else:
-        C_hat = C0
+
+        # initial estimate of the calcium concentration, based on the alpha and
+        # beta params
+        C0 = (1. / alpha).dot(F - beta[:, None]) / npix
+        # C0 = ((F - beta[:, None]) / alpha[:, None]).sum(0)  # equivalent
+
+        # we smooth this with a boxcar filter
+        C0 = _boxcar(C0, dt=dt, avg_win=1.0)
 
     # if we're not learning the parameters, this step is all we need to do
     n_hat, C_hat, LL = _estimate_MAP_spikes(
-        F, C_hat, theta, dt, spikes_tol, spikes_maxiter,
+        F, C0, theta, dt, spikes_tol, spikes_maxiter,
         verbosity
     )
 
@@ -243,10 +238,8 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     sigma, alpha, beta, lamb, gamma = theta
 
-    # correct for the offset and scaling we originally applied to F
-    alpha = alpha * scale
-    beta = (beta * scale) + offset
-    sigma = sigma * scale
+    # correct for the offset we originally applied to F
+    beta = beta + offset
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
     # timebin, for convenience we just concatenate (lamb * dt) to the start of
@@ -278,7 +271,8 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
     # [npix, nt] movie to a single [nt,] vector we speed up the processing a
     # lot!
     C = (1. / alpha).dot(F - beta[:, None]) / npix
-    # C = ((F - beta[:, None]) / alpha[:, None]).mean(0)  # equivalent
+    # C = ((F - beta[:, None]) / alpha[:, None]).sum(0)  # equivalent
+    ipdb.set_trace()
 
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
@@ -498,8 +492,11 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
     abs_dev = np.abs(F - np.median(F, axis=1)[:, None])
     sigma = np.median(abs_dev) / K          # scalar
 
-    # amplitude & baseline parameters
-    alpha = beta = np.median(F, axis=1)     # vector
+    # amplitude
+    alpha = np.median(F, axis=1)     # vector
+
+    # we need to ensure that (F - beta[:, None]) is strictly positive
+    beta = alpha + (F - alpha[:, None]).min() - EPS
 
     # rate parameter
     lamb = hz                               # scalar
@@ -510,11 +507,7 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
     return sigma, alpha, beta, lamb, gamma
 
 
-def _init_C(F, dt=0.02, avg_win=1.0):
-    """
-    initial estimate of the calcium concentration is just a boxcar filtered
-    version of the raw fluorescence
-    """
+def _boxcar(F, dt=0.02, avg_win=1.0):
 
     orig_shape = F.shape
     F = np.atleast_2d(F)
@@ -523,9 +516,9 @@ def _init_C(F, dt=0.02, avg_win=1.0):
     # boxcar filtering
     win_len = max(1, avg_win / dt)
     win = np.ones(win_len) / win_len
-    C0 = ndimage.convolve1d(F, win, axis=1, mode='reflect')
+    Fsmooth = ndimage.convolve1d(F, win, axis=1, mode='reflect')
 
-    return C0.mean(0)
+    return Fsmooth.reshape(orig_shape)
 
 
 def _s2h(ss):
