@@ -157,19 +157,25 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     if theta0 is None:
         theta = _init_theta(F, dt, hz=0.3, tau=0.5)
     else:
-        theta = theta0
+        sigma, alpha, beta, lamb, gamma = theta0
+        # beta absorbs the offset
+        beta = beta - offset
+        theta = sigma, alpha, beta, lamb, gamma
 
     sigma, alpha, beta, lamb, gamma = theta
 
     if C0 is None:
 
+        # smooth the raw fluorescence with a boxcar filter
+        Fsmooth = _boxcar(F.mean(0), dt=dt, avg_win=1.0)
+
         # initial estimate of the calcium concentration, based on the alpha and
-        # beta params
-        C0 = (1. / alpha).dot(F - beta[:, None]) / npix
+        # beta params (an average of the baseline-subtracted fluorescence,
+        # weighted by the reciprocal of the pixel mask)
+        # C0 = (1. / alpha).dot(Fsmooth - beta[:, None]) / npix
         # C0 = ((F - beta[:, None]) / alpha[:, None]).sum(0)  # equivalent
 
-        # we smooth this with a boxcar filter
-        C0 = _boxcar(C0, dt=dt, avg_win=1.0)
+        C0 = Fsmooth
 
     # if we're not learning the parameters, this step is all we need to do
     n_hat, C_hat, LL = _estimate_MAP_spikes(
@@ -201,7 +207,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
             delta_LL = -((LL1 - LL) / LL)
 
             if verbosity >= 1:
-                print('Params: iter=%3i; LL=%12.2f; delta_LL= %8.4g'
+                print('params: iter=%3i; LL=%12.2f; delta_LL= %8.4g'
                       % (nloop_params, LL1, delta_LL))
 
             # if the LL improved or stayed the same, keep these parameters
@@ -267,12 +273,19 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
     sigma, alpha, beta, lamb, gamma = theta
 
     # project the background-subtracted fluorescence movie onto the spatial
-    # filter to get the estimated 'calcium concentration'. by reducing the
-    # [npix, nt] movie to a single [nt,] vector we speed up the processing a
-    # lot!
-    C = (1. / alpha).dot(F - beta[:, None]) / npix
-    # C = ((F - beta[:, None]) / alpha[:, None]).sum(0)  # equivalent
+    # filter to get the estimated 'calcium concentration' (an average of the
+    # baseline-subtracted fluorescence, weighted by the reciprocal of the pixel
+    # mask)
+    recip_alpha = (1. / alpha)
+    C = recip_alpha.dot(F - beta[:, None]) / npix
+    # C = ((F - beta[:, None]) / alpha[:, None]).mean(0)  # equivalent
+
     ipdb.set_trace()
+
+    # we apply a correction factor to the sigma parameter as well
+    sigma_fac = np.sqrt(recip_alpha.dot(recip_alpha)) / npix
+    # sigma_fac = np.sqrt(np.sum(1./(alpha ** 2))) / npix
+    sigma = sigma_fac * sigma
 
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
@@ -295,6 +308,7 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
 
     # compute initial posterior log-likelihood of the fluorescence
     LL = _post_LL(n_hat, res, scale_var, lD, z)
+    # ipdb.set_trace()
 
     nloop1 = 0
     LL_prev = LL
