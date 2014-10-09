@@ -158,24 +158,24 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
         theta = _init_theta(F, dt, hz=0.3, tau=0.5)
     else:
         sigma, alpha, beta, lamb, gamma = theta0
-        # beta absorbs the offset
-        beta = beta - offset
+        # # beta absorbs the offset
+        # beta = beta - offset
         theta = sigma, alpha, beta, lamb, gamma
 
     sigma, alpha, beta, lamb, gamma = theta
 
     if C0 is None:
 
-        # smooth the raw fluorescence with a boxcar filter
-        Fsmooth = _boxcar(F.mean(0), dt=dt, avg_win=1.0)
+        # smooth the raw fluorescence over time
+        Fsmooth = _boxcar(F, dt=dt, avg_win=1.0)
 
         # initial estimate of the calcium concentration, based on the alpha and
         # beta params (an average of the baseline-subtracted fluorescence,
         # weighted by the reciprocal of the pixel mask)
-        # C0 = (1. / alpha).dot(Fsmooth - beta[:, None]) / npix
+        C0 = (1. / alpha).dot(Fsmooth - beta[:, None]) / npix
         # C0 = ((F - beta[:, None]) / alpha[:, None]).sum(0)  # equivalent
 
-        C0 = Fsmooth
+        # C0 = Fsmooth
 
     # if we're not learning the parameters, this step is all we need to do
     n_hat, C_hat, LL = _estimate_MAP_spikes(
@@ -244,8 +244,8 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     sigma, alpha, beta, lamb, gamma = theta
 
-    # correct for the offset we originally applied to F
-    beta = beta + offset
+    # # correct for the offset we originally applied to F
+    # beta = beta + offset
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
     # timebin, for convenience we just concatenate (lamb * dt) to the start of
@@ -272,20 +272,14 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
 
     sigma, alpha, beta, lamb, gamma = theta
 
-    # project the background-subtracted fluorescence movie onto the spatial
-    # filter to get the estimated 'calcium concentration' (an average of the
-    # baseline-subtracted fluorescence, weighted by the reciprocal of the pixel
-    # mask)
-    recip_alpha = (1. / alpha)
-    C = recip_alpha.dot(F - beta[:, None]) / npix
-    # C = ((F - beta[:, None]) / alpha[:, None]).mean(0)  # equivalent
+    # by projecting the fluorescence movie onto the spatial filter, we reduce
+    # everthing to a 1D vector norm
+    alpha_F = alpha.dot(F)
 
-    ipdb.set_trace()
-
-    # we apply a correction factor to the sigma parameter as well
-    sigma_fac = np.sqrt(recip_alpha.dot(recip_alpha)) / npix
-    # sigma_fac = np.sqrt(np.sum(1./(alpha ** 2))) / npix
-    sigma = sigma_fac * sigma
+    # F = alpha * C + beta
+    # (alpha.T * F) = (alpha.T * alpha * C) + (alpha.T * beta)
+    alpha_ss = alpha.dot(alpha)
+    alpha_beta = alpha.dot(beta)
 
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
@@ -300,15 +294,14 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
     n_hat = C_hat[1:] - gamma * C_hat[:-1]
     # assert not np.any(n_hat < EPS), "spike probabilities < EPS"
 
-    # (actual - predicted) calcium
-    res = C - C_hat
+    # (actual - predicted) fluorescence
+    res = alpha_F - (alpha_ss * C_hat + alpha_beta)
 
     # initialize the weight of the barrier term to 1
     z = 1.
 
     # compute initial posterior log-likelihood of the fluorescence
     LL = _post_LL(n_hat, res, scale_var, lD, z)
-    # ipdb.set_trace()
 
     nloop1 = 0
     LL_prev = LL
@@ -351,8 +344,9 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
                 n_hat = C_hat1[1:] - gamma * C_hat1[:-1]
                 # assert not np.any(n_hat < EPS), "spike probabilities < EPS"
 
-                # (predicted - actual) fluorescence
-                res = C - C_hat1
+                # (actual - predicted) fluorescence
+                res = alpha_F - (alpha_ss * C_hat1 + alpha_beta)
+                # res = C - C_hat1
 
                 # compute the new posterior log-likelihood
                 LL1 = _post_LL(n_hat, res, scale_var, lD, z)
@@ -360,8 +354,7 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
 
                 # only update C_hat & LL if LL improved
                 if LL1 > LL:
-                    LL = LL1
-                    C_hat = C_hat1
+                    LL, C_hat = LL1, C_hat1
                     terminate_linesearch = True
 
                 # terminate when the step size is essentially zero but we're
@@ -470,11 +463,23 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
         alpha1, beta1 = alpha, beta
 
     if learn_sigma:
-        C = (1. / alpha).dot(F - beta[:, None]) / npix
-        res = C - C_hat
+
+        # by projecting the fluorescence movie onto the spatial filter, we
+        # reduce everthing to a 1D vector norm
+        alpha_F = alpha.dot(F)
+
+        # F = alpha * C + beta
+        # (alpha.T * F) = (alpha.T * alpha * C) + (alpha.T * beta)
+        alpha_ss = alpha.dot(alpha)
+        alpha_beta = alpha.dot(beta)
+
+        res = alpha_F - alpha_ss * C_hat - alpha_beta
+
         # res_ss = np.sum(res ** 2)
-        res_ss = res.dot(res)                   # faster sum of squares
-        sigma1 = np.sqrt(res_ss / (nt * dt))     # RMS error
+        res_ss = res.dot(res)             # faster sum of squares
+        sigma1 = np.sqrt(res_ss / nt)     # RMS error
+        print sigma, sigma1
+
     else:
         sigma1 = sigma
 
