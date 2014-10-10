@@ -65,9 +65,9 @@ except ImportError:
     pass
 
 
-def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
-               params_tol=1E-6, spikes_tol=1E-6, params_maxiter=20,
-               spikes_maxiter=100, verbosity=0, plot=False):
+def deconvolve(F, C0=None, theta0=None, dt=0.02, fr=0.1, tau=4.5,
+               learn_theta=(0, 0, 0, 0, 0), params_tol=1E-6, spikes_tol=1E-6,
+               params_maxiter=20, spikes_maxiter=100, verbosity=0, plot=False):
     """
     Fast Non-Negative Deconvolution
     ---------------------------------------------------------------------------
@@ -99,6 +99,12 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     dt: float scalar
         duration of each time bin (s)
+
+    fr: float scalar
+        approximate firing rate (Hz), only used if theta0 is not given
+
+    tau: float scalar
+        approximate decay time constant (s), only used if theta0 is not given
 
     learn_theta: len(5) bool sequence
         specifies which of the model parameters to attempt learn via pseudo-EM
@@ -147,15 +153,16 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     tstart = time.time()
 
+    F = F.astype(DTYPE)
     F = np.atleast_2d(F)
     npix, nt = F.shape
 
-    # ensure that C_hat is non-negative
+    # ensure that F is non-negative
     offset = F.min() - EPS
     F = F - offset
 
     if theta0 is None:
-        theta = _init_theta(F, dt, hz=0.3, tau=0.5)
+        theta = _init_theta(F, dt, fr=fr, tau=tau)
     else:
         sigma, alpha, beta, lamb, gamma = theta0
         # beta absorbs the offset
@@ -167,15 +174,13 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     if C0 is None:
 
         # smooth the raw fluorescence over time
-        Fsmooth = _boxcar(F, dt=dt, avg_win=1.0)
+        Fsmooth = _boxcar(F, dt=dt, avg_win=(100 * dt))
 
         # initial estimate of the calcium concentration, based on the alpha and
         # beta params (an average of the baseline-subtracted fluorescence,
         # weighted by the reciprocal of the pixel mask)
         C0 = (1. / alpha).dot(Fsmooth - beta[:, None]) / npix
-        # C0 = ((F - beta[:, None]) / alpha[:, None]).sum(0)  # equivalent
 
-        # C0 = Fsmooth
 
     # if we're not learning the parameters, this step is all we need to do
     n_hat, C_hat, LL = _estimate_MAP_spikes(
@@ -257,7 +262,8 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     return n_hat, C_hat, LL, theta
 
 
-def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
+def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100,
+                         verbosity=0):
     """
     Used internally by deconvolve to compute the maximum a posteriori
     spike train for a given set of fluorescence traces and model parameters.
@@ -340,7 +346,7 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
 
                 # update spike probabilities
                 n_hat = C_hat1[1:] - gamma * C_hat1[:-1]
-                assert not np.any(n_hat < 0), "spike probabilities < 0"
+                # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
                 # (actual - predicted) fluorescence
                 D = F - (alpha[:, None] * C_hat1[None, :] + beta[:, None])
@@ -463,7 +469,7 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
     if learn_sigma:
         D = F - (alpha[:, None] * C_hat[None, :] - beta[:, None])
         ssd = D.ravel().dot(D.ravel())      # fast sum-of-squares
-        sigma = np.sqrt(ssd / nt)          # RMS error
+        sigma = np.sqrt(ssd / nt)           # RMS error
 
     if learn_lamb:
         lamb = nt / n_hat.sum()
@@ -474,7 +480,7 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
     return (sigma, alpha, beta, lamb, gamma)
 
 
-def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
+def _init_theta(F, dt=0.02, fr=0.5, tau=1.0):
 
     orig_shape = F.shape
     F = np.atleast_2d(F)
@@ -496,7 +502,7 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
     beta = alpha + (F - alpha[:, None]).min() - EPS
 
     # rate parameter
-    lamb = hz                               # scalar
+    lamb = fr                               # scalar
 
     # decay parameter (fraction of remaining fluorescence after one time step)
     gamma = np.exp(-dt / tau)               # scalar

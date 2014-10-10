@@ -3,7 +3,7 @@ from scipy import stats, signal
 from _fnndeconv import deconvolve
 
 
-def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
+def make_fake_data(ncells, nframes, dt=(1. / 50), fr=0.5, tau=4.5,
                    sigma=0.2, alpha=1., beta=0.):
     """
     Generate 1D fake fluorescence traces
@@ -13,7 +13,7 @@ def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
         ncells:     number of traces to generate
         nframes:    number of timebins to simulate
         dt:         timestep (s)
-        rate:       spike rate (Hz)
+        fr:         mean firing rate (Hz)
         tau:        time constant of decay in calcium concentration (s)
         sigma:      SD of additive noise on fluorescence
         alpha:      scaling parameter for fluorescence modulation
@@ -29,7 +29,7 @@ def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
     """
 
     # poisson spikes
-    n = stats.poisson.rvs(rate * dt, size=(ncells, nframes))
+    n = stats.poisson.rvs(fr * dt, size=(ncells, nframes))
 
     # internal calcium dynamics
     gamma = np.exp(-dt / tau)
@@ -38,14 +38,14 @@ def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
     # noise
     F = C + np.random.normal(loc=0., scale=sigma, size=C.shape)
 
-    lamb = rate
+    lamb = fr
     theta = (sigma, alpha, beta, lamb, gamma)
 
     return F, C, n, theta
 
 def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
-                    bg_intensity=0.1, mask_sigma=30, dt=(1. / 50), rate=0.5,
-                    tau=1., sigma=0.8):
+                    bg_intensity=0.1, mask_sigma=30, dt=(1. / 50), fr=0.5,
+                    tau=4.5, sigma=0.8):
     """
     Generate 2D fake fluorescence movie
 
@@ -57,7 +57,7 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
         bg_intensity:   scalar, amplitude of (static) baseline fluorescence
         mask_sigma:     scalar, standard deviation of Gaussian mask
         dt:             timestep (s)
-        rate:           spike rate (Hz)
+        fr:             mean firing rate (Hz)
         tau:            time constant of decay in calcium concentration (s)
         sigma:          SD of additive noise on fluorescence
 
@@ -71,7 +71,7 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
     """
 
     # poisson spikes
-    n = stats.poisson.rvs(rate * dt, size=nframes)
+    n = stats.poisson.rvs(fr * dt, size=nframes)
 
     # internal calcium dynamics
     gamma = np.exp(-dt / tau)
@@ -93,7 +93,7 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
 
     alpha = mask.ravel()
     beta = background_fluor.ravel()
-    lamb = rate
+    lamb = fr
 
     # spatially & temporally white noise
     epsilon = np.random.normal(loc=0., scale=sigma, size=C.shape)
