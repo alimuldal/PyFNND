@@ -90,6 +90,22 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
     alpha = np.exp(-1 * ((xs / twoss) + (ys / twoss))).ravel()
     alpha /= alpha.sum()
 
+    # mask = np.array([
+    #     [0, 0, 0, 1, 1, 1, 1, 0, 0, 0],
+    #     [0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+    #     [0, 1, 0, 0, 0, 0, 0, 0, 1, 0],
+    #     [0, 1, 0, 1, 0, 0, 1, 0, 1, 0],
+    #     [0, 1, 0, 0, 0, 0, 0, 0, 1, 0],
+    #     [0, 1, 0, 1, 0, 0, 1, 0, 1, 0],
+    #     [0, 1, 0, 0, 1, 1, 0, 0, 1, 0],
+    #     [0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+    #     [0, 0, 0, 1, 1, 1, 1, 0, 0, 0],
+    #     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    #     ]).astype(np.float64)
+    # alpha = mask.ravel()
+    # alpha /= alpha.sum()
+    # npix = alpha.size
+
     # background fluorescence
     beta = np.random.randn(npix) * bg_intensity
 
