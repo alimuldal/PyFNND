@@ -210,30 +210,35 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
                 print('params: iter=%3i; LL=%12.2f; delta_LL= %8.4g'
                       % (nloop_params, LL1, delta_LL))
 
-            # if the LL improved or stayed the same, keep these parameters
-            if LL1 >= LL:
+            # if the LL gets significantly worse, keep the old parameters and
+            # terminate now
+            if delta_LL < - 1E-5:
+                if verbosity >= 1:
+                    print('Terminating parameter optimization after %i '
+                          'iterations because LL is decreasing' %
+                          nloop_params)
+                done = True
+
+            else:
+                # keep the new parameters
                 n_hat, C_hat, LL, theta = n1, C_hat1, LL1, theta1
 
                 # check the other termination conditions
-                if (np.abs(delta_LL) < params_tol):
+                if np.abs(delta_LL) < params_tol:
                     if verbosity >= 1:
-                        print("Parameters converged after %i iterations"
-                              % (nloop_params))
-                        print "Last delta log-likelihood:\t%8.4g" % delta_LL
-                        print "Best posterior log-likelihood:\t%11.4f" % (
-                            LL)
+                        print("Parameter optimization converged after %i "
+                              "iterations" % nloop_params)
                     done = True
 
-                elif nloop_params > params_maxiter:
+                elif nloop_params == params_maxiter:
                     if verbosity >= 1:
-                        print 'Solution failed to converge before maxiter'
+                        print('Parameter optimization failed to converge '
+                              'before maxiter was reached (%i)' % nloop_params)
                     done = True
 
-            # otherwise terminate
-            else:
-                if verbosity >= 1:
-                    print 'Terminating because solution is diverging'
-                done = True
+            if done:
+                print "Last delta log-likelihood:\t%8.4g" % delta_LL
+                print "Best posterior log-likelihood:\t%11.4f" % LL
 
             # increment the loop counter
             nloop_params += 1
