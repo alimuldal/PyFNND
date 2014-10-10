@@ -1,16 +1,16 @@
 import numpy as np
-from scipy import ndimage
+from scipy import ndimage, signal
 from itertools import izip
 import time
 import warnings
 from _tridiag_solvers import trisolve
+from matplotlib import pyplot as plt
 
 DTYPE = np.float64
 EPS = np.finfo(DTYPE).eps
 
 
 import ipdb
-from matplotlib import pyplot as plt
 plt.ion()
 
 
@@ -46,7 +46,7 @@ try:
         LL: ndarray, [nc,]
             posterior log-likelihood of F given n_hat_best and theta_best
 
-        theta_best: ndarray, [nc, 4]
+        theta_best: ndarray, [nc, 5]
             model parameters, updated according to learn_theta
         """
 
@@ -65,9 +65,9 @@ except ImportError:
     pass
 
 
-def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
-               params_tol=1E-6, spikes_tol=1E-6, params_maxiter=20,
-               spikes_maxiter=100, verbosity=0, plot=False):
+def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
+               learn_theta=(0, 0, 0, 0, 0), params_tol=1E-6, spikes_tol=1E-6,
+               params_maxiter=20, spikes_maxiter=100, verbosity=0, plot=False):
     """
     Fast Non-Negative Deconvolution
     ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
         measured fluorescence values
 
     C0: ndarray, [nt]
-        initial estimate of the calcium concentration for each time bin.
+        initial estimate of the calcium concentration for each time bin
 
     theta0: len(5) sequence
         initial estimates of the model parameters
@@ -99,6 +99,13 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     dt: float scalar
         duration of each time bin (s)
+
+    rate: float scalar
+        estimate of mean firing rate (Hz), ignored if theta0 is not None
+
+    tau: float scalar
+        estimate of calcium decay time constant (s), ignored if theta0 is not
+        None
 
     learn_theta: len(5) bool sequence
         specifies which of the model parameters to attempt learn via pseudo-EM
@@ -155,7 +162,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     F = F - offset
 
     if theta0 is None:
-        theta = _init_theta(F, dt, hz=0.3, tau=0.5)
+        theta = _init_theta(F, dt, rate=rate, tau=tau)
     else:
         sigma, alpha, beta, lamb, gamma = theta0
         # beta absorbs the offset
@@ -165,23 +172,12 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
     sigma, alpha, beta, lamb, gamma = theta
 
     if C0 is None:
-
-        # smooth the raw fluorescence over time
-        Fsmooth = _boxcar(F, dt=dt, avg_win=1.0)
-
-        # initial estimate of the calcium concentration, based on the alpha and
-        # beta params (an average of the baseline-subtracted fluorescence,
-        # weighted by the reciprocal of the pixel mask)
-        C0 = (1. / alpha).dot(Fsmooth - beta[:, None]) / npix
-        # C0 = ((F - beta[:, None]) / alpha[:, None]).sum(0)  # equivalent
-
-        # C0 = Fsmooth
+        n0 = lamb * dt * np.ones(nt)
+        C0 = signal.lfilter(np.r_[1], np.r_[1, -gamma], n0, axis=0)
 
     # if we're not learning the parameters, this step is all we need to do
-    n_hat, C_hat, LL = _estimate_MAP_spikes(
-        F, C0, theta, dt, spikes_tol, spikes_maxiter,
-        verbosity
-    )
+    n_hat, C_hat, LL = _get_MAP_spikes(F, C0, theta, dt, spikes_tol,
+                                       spikes_maxiter, verbosity)
 
     # pseudo-EM iterations to optimize the model parameters
     if np.any(learn_theta):
@@ -198,10 +194,8 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
             theta1 = _update_theta(n_hat, C_hat, F, theta, dt, learn_theta)
 
             # get the new n_hat, C_hat, and LL
-            n1, C_hat1, LL1 = _estimate_MAP_spikes(
-                F, C_hat, theta1, dt, spikes_tol,
-                spikes_maxiter, verbosity
-            )
+            n1, C_hat1, LL1 = _get_MAP_spikes(F, C_hat, theta1, dt, spikes_tol,
+                                              spikes_maxiter, verbosity)
 
             # test for convergence
             delta_LL = -((LL1 - LL) / LL)
@@ -254,10 +248,13 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     theta = sigma, alpha, beta, lamb, gamma
 
+    if plot:
+        _make_plots(F + offset, n_hat, C_hat, theta, dt)
+
     return n_hat, C_hat, LL, theta
 
 
-def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
+def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     """
     Used internally by deconvolve to compute the maximum a posteriori
     spike train for a given set of fluorescence traces and model parameters.
@@ -271,6 +268,9 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
     npix, nt = F.shape
 
     sigma, alpha, beta, lamb, gamma = theta
+
+    # baseline-subtracted fluorescence
+    F_bl =  F - beta[:, None]
 
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
@@ -286,7 +286,7 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
     # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
     # (actual - predicted) fluorescence
-    D = F - (alpha[:, None] * C_hat[None, :] + beta[:, None])
+    D = F_bl - alpha[:, None] * C_hat[None, :]
 
     # initialize the weight of the barrier term to 1
     z = 1.
@@ -331,6 +331,7 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
                     print ("terminating: no step size will keep n_hat >= 0")
 
             nloop3 = 0
+
             # backtracking line search for the largest step size that increases
             # the posterior log-likelihood of the fluorescence
             while not terminate_linesearch:
@@ -340,10 +341,10 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
 
                 # update spike probabilities
                 n_hat = C_hat1[1:] - gamma * C_hat1[:-1]
-                assert not np.any(n_hat < 0), "spike probabilities < 0"
+                # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
                 # (actual - predicted) fluorescence
-                D = F - (alpha[:, None] * C_hat1[None, :] + beta[:, None])
+                D = F_bl - alpha[:, None] * C_hat1[None, :]
 
                 # compute the new posterior log-likelihood
                 LL1 = _post_LL(n_hat, D, scale_var, lD, z)
@@ -463,7 +464,7 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
     if learn_sigma:
         D = F - (alpha[:, None] * C_hat[None, :] - beta[:, None])
         ssd = D.ravel().dot(D.ravel())      # fast sum-of-squares
-        sigma = np.sqrt(ssd / nt)          # RMS error
+        sigma = np.sqrt(ssd / nt)           # RMS error
 
     if learn_lamb:
         lamb = nt / n_hat.sum()
@@ -474,7 +475,7 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
     return (sigma, alpha, beta, lamb, gamma)
 
 
-def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
+def _init_theta(F, dt=0.02, rate=0.5, tau=1.0):
 
     orig_shape = F.shape
     F = np.atleast_2d(F)
@@ -485,24 +486,67 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
     # http://en.wikipedia.org/wiki/Median_absolute_deviation
     K = 1.4785
 
+    med_F = np.median(F, axis=1)
+
     # noise parameter
-    abs_dev = np.abs(F - np.median(F, axis=1)[:, None])
+    abs_dev = np.abs(F - med_F[:, None])
     sigma = np.median(abs_dev) / K          # scalar
 
     # amplitude
-    alpha = np.median(F, axis=1)     # vector
+    alpha = med_F                           # vector
 
     # we need to ensure that (F - beta[:, None]) is strictly positive
-    beta = alpha + (F - alpha[:, None]).min() - EPS
+    beta = med_F + (F - med_F[:, None]).min() - EPS
 
     # rate parameter
-    lamb = hz                               # scalar
+    lamb = rate                               # scalar
 
     # decay parameter (fraction of remaining fluorescence after one time step)
     gamma = np.exp(-dt / tau)               # scalar
 
     return sigma, alpha, beta, lamb, gamma
 
+def _make_plots(F, n_hat, C_hat, theta, dt):
+
+    sigma, alpha, beta, lamb, gamma = theta
+    fig, axes = plt.subplots(2, 1, sharex=True)
+
+    t = np.arange(F.shape[1]) * dt
+    F_hat = alpha[:, None] * C_hat[None, :] + beta[:, None]
+
+    axes[0].hold(True)
+    axes[0].plot(t, F.sum(0), '-b', label=r'$F$')
+    axes[0].plot(t, F_hat.sum(0), '-r', lw=2, label=r'$\alpha\hat{C}+\beta$')
+    axes[0].legend(loc=1, fancybox=True, fontsize='large')
+
+    axes[1].plot(t, n_hat, '-k')
+    axes[1].set_xlabel('Time (s)')
+    axes[1].set_ylabel(r'$\hat{n}$', fontsize='large')
+    axes[1].set_xlim(0, t[-1])
+
+    return fig, axes
+
+def _detrend(x, dt=0.02, stop_hz=0.01, order=5, plot=False):
+
+    nyquist = 0.5 / dt
+    stop = stop_hz / nyquist
+
+    # b, a = signal.cheby2(order, atten, Wn=stop, btype='lowpass')
+    b, a = signal.butter(order, Wn=stop, btype='lowpass')
+
+    y = signal.filtfilt(b, a, x, axis=-1)
+
+    if plot:
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
+        ax1.hold(True)
+        t = np.arange(x.shape[0]) * dt
+        ax1.plot(t, x, '-b')
+        ax1.plot(t, y, '-r', lw=2)
+        ax2.hold(True)
+        ax2.axhline(0, ls='-', color='k')
+        ax2.plot(t, x - y, '-b')
+
+    return y
 
 def _boxcar(F, dt=0.02, avg_win=1.0):
 
