@@ -172,7 +172,13 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
     sigma, alpha, beta, lamb, gamma = theta
 
     if C0 is None:
-        n0 = lamb * dt * np.ones(nt)
+
+        # it's necessary to vary the value of n0 according to the noise level.
+        # when total noise is higher, n0 needs to be set higher or optimization
+        # fails completely. however, when total noise is small then setting n0
+        # too high will mean that n_best will have a significant baseline non-
+        # zero spike probability (which probably ought to be absorbed by beta).
+        n0 = 10 * np.ones(nt) * (sigma / np.sqrt(npix))
         C0 = signal.lfilter(np.r_[1], np.r_[1, -gamma], n0, axis=0)
 
     # if we're not learning the parameters, this step is all we need to do
