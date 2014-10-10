@@ -158,8 +158,8 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
         theta = _init_theta(F, dt, hz=0.3, tau=0.5)
     else:
         sigma, alpha, beta, lamb, gamma = theta0
-        # # beta absorbs the offset
-        # beta = beta - offset
+        # beta absorbs the offset
+        beta = beta - offset
         theta = sigma, alpha, beta, lamb, gamma
 
     sigma, alpha, beta, lamb, gamma = theta
@@ -244,13 +244,13 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, learn_theta=(0, 0, 0, 0, 0),
 
     sigma, alpha, beta, lamb, gamma = theta
 
-    # # correct for the offset we originally applied to F
-    # beta = beta + offset
+    # correct for the offset we originally applied to F
+    beta = beta + offset
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
-    # timebin, for convenience we just concatenate (lamb * dt) to the start of
+    # timebin, for convenience we just concatenate 0 to the start of
     # n_hat so that it has the same shape as F and C_hat
-    n_hat = np.r_[lamb * dt, n_hat]
+    n_hat = np.r_[0, n_hat]
 
     theta = sigma, alpha, beta, lamb, gamma
 
@@ -272,15 +272,6 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
 
     sigma, alpha, beta, lamb, gamma = theta
 
-    # by projecting the fluorescence movie onto the spatial filter, we reduce
-    # everthing to a 1D vector norm
-    alpha_F = alpha.dot(F)
-
-    # F = alpha * C + beta
-    # (alpha.T * F) = (alpha.T * alpha * C) + (alpha.T * beta)
-    alpha_ss = alpha.dot(alpha)
-    alpha_beta = alpha.dot(beta)
-
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
     lD = lamb * dt
@@ -292,20 +283,19 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
 
     # initial estimate of spike probabilities (should be strictly non-negative)
     n_hat = C_hat[1:] - gamma * C_hat[:-1]
-    # assert not np.any(n_hat < EPS), "spike probabilities < EPS"
+    # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
     # (actual - predicted) fluorescence
-    res = alpha_F - (alpha_ss * C_hat + alpha_beta)
+    D = F - (alpha[:, None] * C_hat[None, :] + beta[:, None])
 
     # initialize the weight of the barrier term to 1
     z = 1.
 
     # compute initial posterior log-likelihood of the fluorescence
-    LL = _post_LL(n_hat, res, scale_var, lD, z)
+    LL = _post_LL(n_hat, D, scale_var, lD, z)
 
     nloop1 = 0
-    LL_prev = LL
-    C_hat_prev = C_hat
+    LL_prev, C_hat_prev = LL, C_hat
     terminate_interior = False
 
     # in the outer loop we'll progressively reduce the weight of the barrier
@@ -320,19 +310,27 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
         while (np.linalg.norm(d) > 5E-2) and (s > 1E-3):
 
             # compute direction of newton step
-            d = _direction(n_hat, res, sigma, gamma, scale_var,
-                           grad_lnprior, z)
+            d = _direction(n_hat, D, alpha, sigma, gamma, scale_var,
+                            grad_lnprior, z)
 
             # ensure that s starts sufficiently small to guarantee that n_hat
             # stays positive
             hit = -n_hat / (d[1:] - gamma * d[:-1])
-            within_bounds = hit >= EPS
-            # assert np.any(within_bounds)
-            s = min(1., 0.99 * np.min(hit[within_bounds]))
+            within_bounds = (hit >= 0)
+
+            if np.any(within_bounds):
+                terminate_linesearch = False
+                s = min(1., 0.99 * np.min(hit[within_bounds]))
+            else:
+                # force an early termination at this barrier weight if there is
+                # no step size that will keep n_hat >= 0
+                terminate_linesearch = True;
+                s = 0
+                z = 0
+                if verbosity >= 2:
+                    print ("terminating: no step size will keep n_hat >= 0")
 
             nloop3 = 0
-            terminate_linesearch = False
-
             # backtracking line search for the largest step size that increases
             # the posterior log-likelihood of the fluorescence
             while not terminate_linesearch:
@@ -342,14 +340,13 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
 
                 # update spike probabilities
                 n_hat = C_hat1[1:] - gamma * C_hat1[:-1]
-                # assert not np.any(n_hat < EPS), "spike probabilities < EPS"
+                assert not np.any(n_hat < 0), "spike probabilities < 0"
 
                 # (actual - predicted) fluorescence
-                res = alpha_F - (alpha_ss * C_hat1 + alpha_beta)
-                # res = C - C_hat1
+                D = F - (alpha[:, None] * C_hat1[None, :] + beta[:, None])
 
                 # compute the new posterior log-likelihood
-                LL1 = _post_LL(n_hat, res, scale_var, lD, z)
+                LL1 = _post_LL(n_hat, D, scale_var, lD, z)
                 # assert not np.any(np.isnan(LL1)), "nan LL"
 
                 # only update C_hat & LL if LL improved
@@ -400,37 +397,35 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
     return n_hat, C_hat, LL
 
 
-def _post_LL(n_hat, res, scale_var, lD, z):
+def _post_LL(n_hat, D, scale_var, lD, z):
 
     # barrier term
     with np.errstate(invalid='ignore'):
         barrier = np.log(n_hat).sum()       # this is currently a bottleneck
 
     # sum of squared (predicted - actual) fluorescence
-    res_ss = res.dot(res)                   # faster when res is 1D
-    # res_ss = np.sum(res ** 2)
+    ssd = D.ravel().dot(D.ravel())       # fast sum-of-squares
 
     # weighted posterior log-likelihood of the fluorescence
-    LL = -(scale_var * res_ss) - (n_hat.sum() * lD) + (z * barrier)
+    LL = -(scale_var * ssd) - (n_hat.sum() / lD) + (z * barrier)
 
     return LL
 
-
-def _direction(n_hat, res, sigma, gamma, scale_var, grad_lnprior, z):
+def _direction(n_hat, D, alpha, sigma, gamma, scale_var, grad_lnprior, z):
 
     # gradient
-    n_term = np.zeros_like(res)
+    n_term = np.zeros(D.shape[1])
     n_term[:n_hat.shape[0]] = -gamma / n_hat
     n_term[-n_hat.shape[0]:] += 1. / n_hat
-    g = (2 * scale_var * res - grad_lnprior + z * n_term)
+    g = (2 * scale_var * D.T.dot(alpha) - grad_lnprior + z * n_term)
 
     # main diagonal of the hessian
     n2 = n_hat ** 2
-    Hd0 = np.zeros_like(g)
+    Hd0 = np.zeros(g.shape[0])
     Hd0[:n_hat.shape[0]] = gamma ** 2 / n2
     Hd0[-n_hat.shape[0]:] += 1 / n2
     Hd0 *= -z
-    Hd0 += -1 / sigma ** 2
+    Hd0 += -alpha.dot(alpha) / sigma ** 2
 
     # upper/lower diagonals of the hessian
     Hd1 = z * gamma / n2
@@ -441,7 +436,6 @@ def _direction(n_hat, res, sigma, gamma, scale_var, grad_lnprior, z):
 
     return d
 
-
 def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
 
     sigma, alpha, beta, lamb, gamma = theta
@@ -450,50 +444,34 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
     npix, nt = F.shape
 
     if learn_alpha:
-        A = np.vstack((C_hat, np.ones(C_hat.shape[0])))
+
+        if learn_beta:
+            A = np.vstack((C_hat, np.ones(C_hat.shape[0])))
+        else:
+            A = C_hat[None, :]
+
         Y, residuals, rank, s = np.linalg.lstsq(A.T, F.T)
-        alpha1, beta1 = Y
+
+        if learn_beta:
+            alpha, beta = Y
+        else:
+            alpha = Y[0]
 
     elif learn_beta:
-        # this converges very slowly!
-        beta1 = np.sum(F - C_hat) / nt
-        alpha1 = alpha
-
-    else:
-        alpha1, beta1 = alpha, beta
+        beta = (F - alpha[:, None] * C_hat[None, :]).sum(1) / nt
 
     if learn_sigma:
-
-        # by projecting the fluorescence movie onto the spatial filter, we
-        # reduce everthing to a 1D vector norm
-        alpha_F = alpha.dot(F)
-
-        # F = alpha * C + beta
-        # (alpha.T * F) = (alpha.T * alpha * C) + (alpha.T * beta)
-        alpha_ss = alpha.dot(alpha)
-        alpha_beta = alpha.dot(beta)
-
-        res = alpha_F - alpha_ss * C_hat - alpha_beta
-
-        # res_ss = np.sum(res ** 2)
-        res_ss = res.dot(res)             # faster sum of squares
-        sigma1 = np.sqrt(res_ss / nt)     # RMS error
-        print sigma, sigma1
-
-    else:
-        sigma1 = sigma
+        D = F - (alpha[:, None] * C_hat[None, :] - beta[:, None])
+        ssd = D.ravel().dot(D.ravel())      # fast sum-of-squares
+        sigma = np.sqrt(ssd / nt)          # RMS error
 
     if learn_lamb:
-        lamb1 = np.sum(n_hat) / (nt * dt)
-    else:
-        lamb1 = lamb
+        lamb = nt / n_hat.sum()
 
     if learn_gamma:
         warnings.warn('optimising gamma is not yet supported (ignoring)')
 
-    gamma1 = gamma
-
-    return (sigma1, alpha1, beta1, lamb1, gamma1)
+    return (sigma, alpha, beta, lamb, gamma)
 
 
 def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
