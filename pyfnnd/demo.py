@@ -13,7 +13,7 @@ def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
         ncells:     number of traces to generate
         nframes:    number of timebins to simulate
         dt:         timestep (s)
-        rate:       spike rate (Hz)
+        rate:       mean spike rate (Hz)
         tau:        time constant of decay in calcium concentration (s)
         sigma:      SD of additive noise on fluorescence
         alpha:      scaling parameter for fluorescence modulation
@@ -36,7 +36,7 @@ def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
     C = signal.lfilter(np.r_[1], np.r_[1, -gamma], n, axis=1)
 
     # noise
-    F = C + np.random.normal(loc=0., scale=sigma, size=C.shape)
+    F = C + np.random.randn(*C.shape) * sigma
 
     lamb = rate
     theta = (sigma, alpha, beta, lamb, gamma)
@@ -57,7 +57,7 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
         bg_intensity:   scalar, amplitude of (static) baseline fluorescence
         mask_sigma:     scalar, standard deviation of Gaussian mask
         dt:             timestep (s)
-        rate:           spike rate (Hz)
+        rate:           mean spike rate (Hz)
         tau:            time constant of decay in calcium concentration (s)
         sigma:          SD of additive noise on fluorescence
 
@@ -77,8 +77,9 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
     gamma = np.exp(-dt / tau)
     C = signal.lfilter(np.r_[1], np.r_[1, -gamma], n, axis=0)
 
-    # pixel weights (sum to 1)
+    # pixel weights (sum == 1)
     nr, nc = mask_shape
+    npix = nr * nc
     if mask_center is None:
         mask_center = (nc // 2., nr // 2.)
     a, b = mask_center
@@ -86,17 +87,17 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
     xs = (x - a) ** 2.
     ys = (y - b) ** 2.
     twoss = 2. * mask_sigma ** 2.
-    mask = (1. / (twoss * np.pi)) * np.exp(-1 * ((xs / twoss) + (ys / twoss)))
+    alpha = np.exp(-1 * ((xs / twoss) + (ys / twoss))).ravel()
+    alpha /= alpha.sum()
 
     # background fluorescence
-    background_fluor = np.random.randn(nr, nc) * bg_intensity
+    beta = np.random.randn(npix) * bg_intensity
 
-    alpha = mask.ravel()
-    beta = background_fluor.ravel()
+    # firing rate (spike probability per sec)
     lamb = rate
 
     # spatially & temporally white noise
-    epsilon = np.random.normal(loc=0., scale=sigma, size=C.shape)
+    epsilon = np.random.randn(npix, nframes) * sigma
 
     # simulated fluorescence
     F = C[None, :] * alpha[:, None] + beta[:, None] + epsilon
