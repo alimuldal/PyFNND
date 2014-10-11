@@ -4,7 +4,7 @@ from itertools import izip
 import time
 import warnings
 from _tridiag_solvers import trisolve
-from matplotlib import pyplot as plt
+import plotting
 
 DTYPE = np.float64
 EPS = np.finfo(DTYPE).eps
@@ -67,7 +67,8 @@ except ImportError:
 
 def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
                learn_theta=(0, 0, 0, 0, 0), params_tol=1E-6, spikes_tol=1E-6,
-               params_maxiter=20, spikes_maxiter=100, verbosity=0, plot=False):
+               params_maxiter=20, spikes_maxiter=100, verbosity=0, plot=False,
+               frame_shape=None):
     """
     Fast Non-Negative Deconvolution
     ---------------------------------------------------------------------------
@@ -129,6 +130,13 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
         1: convergence messages for model parameters
         2: convergence messages for model parameters & MAP spike train
 
+    plot: bool scalar
+        plot the fit
+
+    frame_shape: tuple
+        if plot == True, this specifies the pixel dimensions of a single frame
+        (nrows, ncols), which are used to plot alpha and beta
+
     Returns:
     ---------------------------------------------------------------------------
     n_hat_best: ndarray, [nt]
@@ -178,7 +186,7 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
         # fails completely. however, when total noise is small then setting n0
         # too high will mean that n_best will have a significant baseline non-
         # zero spike probability (which probably ought to be absorbed by beta).
-        n0 = 10 * np.ones(nt) * (sigma / np.sqrt(npix))
+        n0 = 10. * np.ones(nt) * (sigma / np.sqrt(npix))
         C0 = signal.lfilter(np.r_[1], np.r_[1, -gamma], n0, axis=0)
 
     # if we're not learning the parameters, this step is all we need to do
@@ -260,7 +268,12 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
     theta = sigma, alpha, beta, lamb, gamma
 
     if plot:
-        _make_plots(F + offset, n_hat, C_hat, theta, dt)
+        if (F.shape[0] > 1) and (frame_shape is not None):
+            nrows, ncols = frame_shape
+            plotting.plot_fit_2D(F + offset, n_hat, C_hat, theta, dt,
+                                 nrows, ncols)
+        else:
+            plotting.plot_fit(F + offset, n_hat, C_hat, theta, dt)
 
     return n_hat, C_hat, LL, theta
 
@@ -517,27 +530,11 @@ def _init_theta(F, dt=0.02, rate=0.5, tau=1.0):
 
     return sigma, alpha, beta, lamb, gamma
 
-def _make_plots(F, n_hat, C_hat, theta, dt):
-
-    sigma, alpha, beta, lamb, gamma = theta
-    fig, axes = plt.subplots(2, 1, sharex=True)
-
-    t = np.arange(F.shape[1]) * dt
-    F_hat = alpha[:, None] * C_hat[None, :] + beta[:, None]
-
-    axes[0].hold(True)
-    axes[0].plot(t, F.sum(0), '-b', label=r'$F$')
-    axes[0].plot(t, F_hat.sum(0), '-r', lw=2, label=r'$\alpha\hat{C}+\beta$')
-    axes[0].legend(loc=1, fancybox=True, fontsize='large')
-
-    axes[1].plot(t, n_hat, '-k')
-    axes[1].set_xlabel('Time (s)')
-    axes[1].set_ylabel(r'$\hat{n}$', fontsize='large')
-    axes[1].set_xlim(0, t[-1])
-
-    return fig, axes
 
 def _detrend(x, dt=0.02, stop_hz=0.01, order=5, plot=False):
+
+    orig_shape = x.shape
+    x = np.atleast_2d(x)
 
     nyquist = 0.5 / dt
     stop = stop_hz / nyquist
@@ -545,19 +542,19 @@ def _detrend(x, dt=0.02, stop_hz=0.01, order=5, plot=False):
     # b, a = signal.cheby2(order, atten, Wn=stop, btype='lowpass')
     b, a = signal.butter(order, Wn=stop, btype='lowpass')
 
-    y = signal.filtfilt(b, a, x, axis=-1)
+    y = signal.filtfilt(b, a, x, axis=1)
 
     if plot:
         fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
         ax1.hold(True)
-        t = np.arange(x.shape[0]) * dt
-        ax1.plot(t, x, '-b')
-        ax1.plot(t, y, '-r', lw=2)
+        t = np.arange(x.shape[1]) * dt
+        ax1.plot(t, x.sum(0), '-b')
+        ax1.plot(t, y.sum(0), '-r', lw=2)
         ax2.hold(True)
         ax2.axhline(0, ls='-', color='k')
-        ax2.plot(t, x - y, '-b')
+        ax2.plot(t, (x - y).sum(0), '-b')
 
-    return y
+    return (x - y).reshape(orig_shape)
 
 def _boxcar(F, dt=0.02, avg_win=1.0):
 
