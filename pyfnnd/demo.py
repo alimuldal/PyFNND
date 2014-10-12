@@ -4,7 +4,7 @@ from _fnndeconv import deconvolve
 
 
 def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
-                   sigma=0.2, alpha=1., beta=0.):
+                   sigma=0.2, alpha=1., beta=0., seed=None):
     """
     Generate 1D fake fluorescence traces
 
@@ -28,24 +28,27 @@ def make_fake_data(ncells, nframes, dt=(1. / 50), rate=0.5, tau=1.,
 
     """
 
+    gen = np.random.RandomState(seed)
+
     # poisson spikes
-    n = stats.poisson.rvs(rate * dt, size=(ncells, nframes))
+    n = gen.poisson(rate * dt, size=(ncells, nframes))
 
     # internal calcium dynamics
     gamma = np.exp(-dt / tau)
     C = signal.lfilter(np.r_[1], np.r_[1, -gamma], n, axis=1)
 
     # noise
-    F = C + np.random.randn(*C.shape) * sigma
+    F = C + gen.randn(*C.shape) * sigma
 
     lamb = rate
     theta = (sigma, alpha, beta, lamb, gamma)
 
     return F, C, n, theta
 
+
 def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
                     bg_intensity=0.1, mask_sigma=30, dt=(1. / 50), rate=0.5,
-                    tau=1., sigma=0.8):
+                    tau=1., sigma=0.8, seed=None):
     """
     Generate 2D fake fluorescence movie
 
@@ -70,8 +73,10 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
 
     """
 
+    gen = np.random.RandomState(seed)
+
     # poisson spikes
-    n = stats.poisson.rvs(rate * dt, size=nframes)
+    n = gen.poisson(rate * dt, size=nframes)
 
     # internal calcium dynamics
     gamma = np.exp(-dt / tau)
@@ -107,13 +112,13 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
     # npix = alpha.size
 
     # background fluorescence
-    beta = np.random.randn(npix) * bg_intensity
+    beta = gen.randn(npix) * bg_intensity
 
     # firing rate (spike probability per sec)
     lamb = rate
 
     # spatially & temporally white noise
-    epsilon = np.random.randn(npix, nframes) * sigma
+    epsilon = gen.randn(npix, nframes) * sigma
 
     # simulated fluorescence
     F = C[None, :] * alpha[:, None] + beta[:, None] + epsilon
