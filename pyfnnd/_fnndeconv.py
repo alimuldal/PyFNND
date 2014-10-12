@@ -67,7 +67,7 @@ except ImportError:
 
 
 def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
-               learn_theta=((0,) * 5), params_tol=1E-6, spikes_tol=1E-6,
+               learn_theta=((0,) * 5), params_tol=1E-3, spikes_tol=1E-3,
                params_maxiter=20, spikes_maxiter=100, verbosity=0, plot=False,
                frame_shape=None):
     """
@@ -228,9 +228,9 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
                 # terminate if the step size gets too small without seeing any
                 # improvement in LL
-                elif s < 1E-6:
+                elif s < EPS:
                     if verbosity >= 1:
-                        print('params: terminated linesearch: s < 1E-6 on'
+                        print('params: terminated linesearch: s < EPS on'
                               ' %i iterations' % nloop2)
                     terminate_linesearch = True
                     done = True
@@ -250,7 +250,6 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
                 # keep the new parameters
                 n_hat, C_hat, LL, theta = n1, C_hat1, LL1, theta1
-
 
                 # if the LL is not improving significantly, time to terminate
                 if delta_LL < params_tol:
@@ -320,14 +319,20 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
     sigma, alpha, beta, lamb, gamma = theta
 
-    # baseline-subtracted fluorescence
-    F_bl =  F - beta[:, None]
+    # we project everything onto the alpha mask so that we only ever have to
+    # deal with 1D vector norms
+    alpha_F = alpha.dot(F)
+    alpha_ss = alpha.dot(alpha)
+    alpha_beta = alpha.dot(beta)
+    alpha_F_bl = alpha_F - alpha_beta
+
+    F_bl = F - beta[:, None]
 
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma ** 2)
     lD = lamb * dt
 
-    # used for computing the gradient (M.T.dot(LambdaDelta))
+    # used for computing the gradient (M.T.dot(lamb * dt))
     grad_lnprior = np.zeros(nt, dtype=DTYPE)
     grad_lnprior[1:] = lD
     grad_lnprior[:-1] += lD * - gamma
@@ -360,9 +365,19 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
         # converge for this barrier weight
         while (np.linalg.norm(d) > 5E-2) and (s > 1E-3):
 
+            # by projecting everything onto alpha, we reduce this to a 1D
+            # vector norm
+            alpha_D = alpha_F_bl - alpha_ss * C_hat
+
             # compute direction of newton step
-            d = _direction(n_hat, D, alpha, sigma, gamma, scale_var,
+
+            # d = _direction(n_hat, D, alpha, sigma, gamma, scale_var,
+            #                 grad_lnprior, z)
+
+            d = _direction2(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
                             grad_lnprior, z)
+
+            # ipdb.set_trace()
 
             # ensure that s starts sufficiently small to guarantee that n_hat
             # stays positive
@@ -452,14 +467,14 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 def _post_LL(n_hat, D, scale_var, lD, z):
 
     # barrier term
-    with np.errstate(invalid='ignore'):
+    with np.errstate(invalid='ignore'):     # suppress log(0) error messages
         barrier = np.log(n_hat).sum()       # this is currently a bottleneck
 
     # sum of squared (predicted - actual) fluorescence
-    ssd = D.ravel().dot(D.ravel())       # fast sum-of-squares
+    D_ss = D.ravel().dot(D.ravel())         # fast sum-of-squares
 
     # weighted posterior log-likelihood of the fluorescence
-    LL = -(scale_var * ssd) - (n_hat.sum() / lD) + (z * barrier)
+    LL = -(scale_var * D_ss) - (n_hat.sum() / lD) + (z * barrier)
 
     return LL
 
@@ -469,7 +484,7 @@ def _direction(n_hat, D, alpha, sigma, gamma, scale_var, grad_lnprior, z):
     n_term = np.zeros(D.shape[1])
     n_term[:n_hat.shape[0]] = -gamma / n_hat
     n_term[-n_hat.shape[0]:] += 1. / n_hat
-    g = (2 * scale_var * D.T.dot(alpha) - grad_lnprior + z * n_term)
+    g = (2 * scale_var * alpha.dot(D) - grad_lnprior + z * n_term)
 
     # main diagonal of the hessian
     n2 = n_hat ** 2
@@ -487,6 +502,33 @@ def _direction(n_hat, D, alpha, sigma, gamma, scale_var, grad_lnprior, z):
     d = trisolve(Hd1, Hd0, Hd1.copy(), -g, inplace=True)
 
     return d
+
+def _direction2(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
+                grad_lnprior, z):
+
+    # gradient
+    n_term = np.zeros(grad_lnprior.shape[0])
+    n_term[:n_hat.shape[0]] = -gamma / n_hat
+    n_term[-n_hat.shape[0]:] += 1. / n_hat
+    g = (2 * scale_var * alpha_D - grad_lnprior + z * n_term)
+
+    # main diagonal of the hessian
+    n2 = n_hat ** 2
+    Hd0 = np.zeros(g.shape[0])
+    Hd0[:n_hat.shape[0]] = gamma ** 2 / n2
+    Hd0[-n_hat.shape[0]:] += 1 / n2
+    Hd0 *= -z
+    Hd0 += -alpha_ss / sigma ** 2
+
+    # upper/lower diagonals of the hessian
+    Hd1 = z * gamma / n2
+
+    # solve the tridiagonal system Hd = -g (we use -g, since we want to
+    # *ascend* the LL gradient)
+    d = trisolve(Hd1, Hd0, Hd1.copy(), -g, inplace=True)
+
+    return d
+
 
 def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
 
@@ -529,6 +571,7 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
 
 def _init_theta(F, theta0, offset, dt=0.02, rate=1., tau=1.0):
 
+    npix, nt = F.shape
     sigma, alpha, beta, lamb, gamma = theta0
 
     if None in (sigma, alpha, beta):
@@ -549,7 +592,10 @@ def _init_theta(F, theta0, offset, dt=0.02, rate=1., tau=1.0):
 
     # baseline
     if beta is None:
-        beta = med_F                            # vector
+        if npix == 1:
+            beta = np.atleast_1d(np.percentile(F, 5., axis=1))
+        else:
+            beta = med_F
     else:
         # beta should absorb the offset parameter
         beta = beta - offset
