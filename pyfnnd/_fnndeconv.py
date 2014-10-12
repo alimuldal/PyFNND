@@ -11,6 +11,7 @@ EPS = np.finfo(DTYPE).eps
 
 
 import ipdb
+from matplotlib import pyplot as plt
 plt.ion()
 
 
@@ -65,8 +66,8 @@ except ImportError:
     pass
 
 
-def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
-               learn_theta=(0, 0, 0, 0, 0), params_tol=1E-6, spikes_tol=1E-6,
+def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
+               learn_theta=((0,) * 5), params_tol=1E-6, spikes_tol=1E-6,
                params_maxiter=20, spikes_maxiter=100, verbosity=0, plot=False,
                frame_shape=None):
     """
@@ -95,18 +96,19 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
         initial estimate of the calcium concentration for each time bin
 
     theta0: len(5) sequence
-        initial estimates of the model parameters
-        (sigma, alpha, beta, lambda, gamma).
+        initial estimates of the model parameters (sigma, alpha, beta, lambda,
+        gamma). any parameters in theta0 that are None will be estimated from
+        F.
 
     dt: float scalar
         duration of each time bin (s)
 
     rate: float scalar
-        estimate of mean firing rate (Hz), ignored if theta0 is not None
+        estimate of mean firing rate (Hz), ignored if theta0[3] is not None
 
     tau: float scalar
-        estimate of calcium decay time constant (s), ignored if theta0 is not
-        None
+        estimate of calcium decay time constant (s), ignored if theta0[4] is
+        not None
 
     learn_theta: len(5) bool sequence
         specifies which of the model parameters to attempt learn via pseudo-EM
@@ -169,25 +171,18 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
     offset = F.min() - EPS
     F = F - offset
 
-    if theta0 is None:
-        theta = _init_theta(F, dt, rate=rate, tau=tau)
-    else:
-        sigma, alpha, beta, lamb, gamma = theta0
-        # beta absorbs the offset
-        beta = beta - offset
-        theta = sigma, alpha, beta, lamb, gamma
+    theta = _init_theta(F, theta0, offset, dt=dt, rate=rate, tau=tau)
 
     sigma, alpha, beta, lamb, gamma = theta
 
     if C0 is None:
 
-        # it's necessary to vary the value of n0 according to the noise level.
-        # when total noise is higher, n0 needs to be set higher or optimization
-        # fails completely. however, when total noise is small then setting n0
-        # too high will mean that n_best will have a significant baseline non-
-        # zero spike probability (which probably ought to be absorbed by beta).
-        n0 = 10. * np.ones(nt) * (sigma / np.sqrt(npix))
-        C0 = signal.lfilter(np.r_[1], np.r_[1, -gamma], n0, axis=0)
+        # let n0 be a uniform vector of estimated mean spike probability, then
+        # push this through the forward model to get C0. this way C0 is
+        # guaranteed not to result in negative spike probabities in n_hat on
+        # the first iteration.
+        n0 = lamb * dt * np.ones(nt)
+        C0 = signal.lfilter(np.r_[1.], np.r_[1., -gamma], n0, axis=0)
 
     # if we're not learning the parameters, this step is all we need to do
     n_hat, C_hat, LL = _get_MAP_spikes(F, C0, theta, dt, spikes_tol,
@@ -197,59 +192,91 @@ def deconvolve(F, C0=None, theta0=None, dt=0.02, rate=0.5, tau=1.,
     if np.any(learn_theta):
 
         if verbosity >= 1:
-            print('Params: iter=%3i; LL=%12.2f; delta_LL= N/A' % (0, LL))
+            print('params: iter=%3i; LL=%12.2f; delta_LL= N/A' % (0, LL))
 
-        nloop_params = 1
+        nloop1 = 1
         done = False
 
         while not done:
 
-            # update the parameter estimates
-            theta1 = _update_theta(n_hat, C_hat, F, theta, dt, learn_theta)
+            s = 1.
+            nloop2 = 1
+            terminate_linesearch = False
 
-            # get the new n_hat, C_hat, and LL
-            n1, C_hat1, LL1 = _get_MAP_spikes(F, C_hat, theta1, dt, spikes_tol,
-                                              spikes_maxiter, verbosity)
+            # a 'full' parameter update, as used in the Vogelstein paper/code
+            theta_up = _update_theta(n_hat, C_hat, F, theta, dt, learn_theta)
+
+            # backtracking linesearch for the biggest step size that improves
+            # the LL
+            while not terminate_linesearch:
+
+                # increment the parameter values according to the current step
+                # size
+                theta1 = tuple(
+                    (p + (p1 - p) * s for p, p1 in zip(theta, theta_up))
+                )
+
+                # get the new n_hat, C_hat, and LL
+                n1, C_hat1, LL1 = _get_MAP_spikes(
+                    F, C_hat, theta1, dt, spikes_tol,
+                    spikes_maxiter, verbosity
+                )
+
+                # new solution found
+                if LL1 >= LL:
+                    terminate_linesearch = True
+
+                # terminate if the step size gets too small without seeing any
+                # improvement in LL
+                elif s < 1E-6:
+                    if verbosity >= 1:
+                        print('params: terminated linesearch: s < 1E-6 on'
+                              ' %i iterations' % nloop2)
+                    terminate_linesearch = True
+                    done = True
+
+                # reduce the step size, increment the counter
+                s /= 3.
+                nloop2 += 1
 
             # test for convergence
             delta_LL = -((LL1 - LL) / LL)
 
             if verbosity >= 1:
                 print('params: iter=%3i; LL=%12.2f; delta_LL= %8.4g'
-                      % (nloop_params, LL1, delta_LL))
+                      % (nloop1, LL1, delta_LL))
 
-            # if the LL gets significantly worse, keep the old parameters and
-            # terminate now
-            if delta_LL < - 1E-5:
-                if verbosity >= 1:
-                    print('Terminating parameter optimization after %i '
-                          'iterations because LL is decreasing' %
-                          nloop_params)
-                done = True
+            if delta_LL > 0:
 
-            else:
                 # keep the new parameters
                 n_hat, C_hat, LL, theta = n1, C_hat1, LL1, theta1
 
-                # check the other termination conditions
-                if np.abs(delta_LL) < params_tol:
+
+                # if the LL is not improving significantly, time to terminate
+                if delta_LL < params_tol:
                     if verbosity >= 1:
                         print("Parameter optimization converged after %i "
-                              "iterations" % nloop_params)
+                              "iterations" % nloop1)
                     done = True
 
-                elif nloop_params == params_maxiter:
+                elif nloop1 == params_maxiter:
                     if verbosity >= 1:
                         print('Parameter optimization failed to converge '
-                              'before maxiter was reached (%i)' % nloop_params)
+                              'before maxiter was reached (%i)' % nloop1)
                     done = True
+
+            else:
+                if verbosity >= 1:
+                    print('Terminating parameter optimization on %i '
+                          'iterations: LL is decreasing' % nloop1)
+                done = True
 
             if done:
                 print "Last delta log-likelihood:\t%8.4g" % delta_LL
                 print "Best posterior log-likelihood:\t%11.4f" % LL
 
             # increment the loop counter
-            nloop_params += 1
+            nloop1 += 1
 
     if verbosity >= 1:
         time_taken = time.time() - tstart
@@ -348,9 +375,9 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
             else:
                 # force an early termination at this barrier weight if there is
                 # no step size that will keep n_hat >= 0
-                terminate_linesearch = True;
-                s = 0
-                z = 0
+                terminate_linesearch = True
+                s = -1
+                terminate_interior = True
                 if verbosity >= 2:
                     print ("terminating: no step size will keep n_hat >= 0")
 
@@ -398,7 +425,7 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
             nloop2 += 1
 
         # test for convergence
-        delta_LL = np.abs((LL - LL_prev) / LL_prev)
+        delta_LL = -(LL - LL_prev) / LL_prev
 
         if (delta_LL < tol):
             terminate_interior = True
@@ -475,10 +502,11 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
         else:
             A = C_hat[None, :]
 
-        Y, residuals, rank, s = np.linalg.lstsq(A.T, F.T)
+        Y, residuals, rank, singular_vals = np.linalg.lstsq(A.T, F.T)
 
         if learn_beta:
             alpha, beta = Y
+
         else:
             alpha = Y[0]
 
@@ -491,7 +519,7 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
         sigma = np.sqrt(ssd / nt)           # RMS error
 
     if learn_lamb:
-        lamb = nt / n_hat.sum()
+        lamb = n_hat.sum() / (nt * dt)
 
     if learn_gamma:
         warnings.warn('optimising gamma is not yet supported (ignoring)')
@@ -499,34 +527,40 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
     return (sigma, alpha, beta, lamb, gamma)
 
 
-def _init_theta(F, dt=0.02, rate=0.5, tau=1.0):
+def _init_theta(F, theta0, offset, dt=0.02, rate=1., tau=1.0):
 
-    orig_shape = F.shape
-    F = np.atleast_2d(F)
-    npix, nt = F.shape
+    sigma, alpha, beta, lamb, gamma = theta0
 
-    # K is the correction factor when using the median absolute deviation as a
-    # robust estimator of the standard deviation of a normal distribution
-    # http://en.wikipedia.org/wiki/Median_absolute_deviation
-    K = 1.4785
-
-    med_F = np.median(F, axis=1)
+    if None in (sigma, alpha, beta):
+        med_F = np.median(F, axis=1)
 
     # noise parameter
-    abs_dev = np.abs(F - med_F[:, None])
-    sigma = np.median(abs_dev) / K          # scalar
+    if sigma is None:
+        # K is the correction factor when using the median absolute deviation
+        # as a robust estimator of the standard deviation of a normal
+        # distribution <http://en.wikipedia.org/wiki/Median_absolute_deviation>
+        K = 1.4826
+        mad = np.median(np.abs(F - med_F[:, None]))
+        sigma = mad * K                         # scalar
 
     # amplitude
-    alpha = med_F                           # vector
+    if alpha is None:
+        alpha = med_F                           # vector
 
-    # we need to ensure that (F - beta[:, None]) is strictly positive
-    beta = med_F + (F - med_F[:, None]).min() - EPS
+    # baseline
+    if beta is None:
+        beta = med_F                            # vector
+    else:
+        # beta should absorb the offset parameter
+        beta = beta - offset
 
-    # rate parameter
-    lamb = rate                               # scalar
+    # firing rate
+    if lamb is None:
+        lamb = rate                             # scalar
 
     # decay parameter (fraction of remaining fluorescence after one time step)
-    gamma = np.exp(-dt / tau)               # scalar
+    if gamma is None:
+        gamma = np.exp(-dt / tau)               # scalar
 
     return sigma, alpha, beta, lamb, gamma
 
