@@ -304,7 +304,7 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     return n_hat, C_hat, LL, theta
 
 
-def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
+def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-3, maxiter=100, verbosity=0):
     """
     Used internally by deconvolve to compute the maximum a posteriori
     spike train for a given set of fluorescence traces and model parameters.
@@ -370,14 +370,8 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
             alpha_D = alpha_F_bl - alpha_ss * C_hat
 
             # compute direction of newton step
-
-            # d = _direction(n_hat, D, alpha, sigma, gamma, scale_var,
-            #                 grad_lnprior, z)
-
-            d = _direction2(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
-                            grad_lnprior, z)
-
-            # ipdb.set_trace()
+            d = _direction(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
+                           grad_lnprior, z)
 
             # ensure that s starts sufficiently small to guarantee that n_hat
             # stays positive
@@ -478,32 +472,8 @@ def _post_LL(n_hat, D, scale_var, lD, z):
 
     return LL
 
-def _direction(n_hat, D, alpha, sigma, gamma, scale_var, grad_lnprior, z):
 
-    # gradient
-    n_term = np.zeros(D.shape[1])
-    n_term[:n_hat.shape[0]] = -gamma / n_hat
-    n_term[-n_hat.shape[0]:] += 1. / n_hat
-    g = (2 * scale_var * alpha.dot(D) - grad_lnprior + z * n_term)
-
-    # main diagonal of the hessian
-    n2 = n_hat ** 2
-    Hd0 = np.zeros(g.shape[0])
-    Hd0[:n_hat.shape[0]] = gamma ** 2 / n2
-    Hd0[-n_hat.shape[0]:] += 1 / n2
-    Hd0 *= -z
-    Hd0 += -alpha.dot(alpha) / sigma ** 2
-
-    # upper/lower diagonals of the hessian
-    Hd1 = z * gamma / n2
-
-    # solve the tridiagonal system Hd = -g (we use -g, since we want to
-    # *ascend* the LL gradient)
-    d = trisolve(Hd1, Hd0, Hd1.copy(), -g, inplace=True)
-
-    return d
-
-def _direction2(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
+def _direction(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
                 grad_lnprior, z):
 
     # gradient
