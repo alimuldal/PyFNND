@@ -156,12 +156,11 @@ def ground_truth_2D(F, n_hat, C_hat, theta_hat, n, C, theta, dt, nrows, ncols):
     ax1.plot(t, F.sum(0), '-k', alpha=0.5, label=r'$F$')
 
     # fitted fluorescence
-    ax1.plot(t, F_hat.sum(0), '-b', lw=1,
-             label=r'$\hat{\alpha}\hat{C}+\hat{\beta}$')
+    ax1.plot(t, F_hat.sum(0), '-b', label=r'$\hat{\alpha}\hat{C}+\hat{\beta}$')
 
     # true noise-free fluorescence
-    ax1.plot(t, F_real.sum(0), '-r', lw=2, label=r'$\alpha C+\beta$')
-    ax1.legend(loc=1, fancybox=True, fontsize='large')
+    ax1.plot(t, F_real.sum(0), '-r',label=r'$\alpha C+\beta$')
+    ax1.legend(loc=1, fancybox=True, ncol=3, fontsize='large')
     ax1.tick_params(labelbottom=False)
 
     # true spikes
