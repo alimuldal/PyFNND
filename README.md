@@ -29,7 +29,7 @@ Dependencies
 * `joblib` - optional, required for parallel processing
 * A shared LAPACK library (source is available from [here](http://www.netlib.org/lapack/#_software); Ubuntu users can simply `$ sudo apt-get install liblapack`)
 
-PyFNND has been tested on machines running Ubuntu Linux (14.10), and using `numpy` v1.8.1 and `scipy` v0.14.0, as well as the current bleeding-edge dev versions of both libraries. Comments, suggestions and bug reports are all welcome.
+PyFNND has been tested on machines running Ubuntu Linux (14.04), and using `numpy` v1.8.1 and `scipy` v0.14.0, as well as the current bleeding-edge dev versions of both libraries. Comments, suggestions and bug reports are all welcome.
 
 Installation
 ---------------
@@ -37,13 +37,28 @@ From the root of the source distribution, simply call
 
     $ python setup.py install
 
-Test plots
+Example usage
 -----------------
 
-    from pyfnnd import demo
-    demo.make_demo_plots()
+```python
+from pyfnnd import deconvolve, demo, plotting
 
-![Imgur](http://i.imgur.com/xfJhO0Z.png)
+# synthetic fluorescence movie
+F, C, n, theta = demo.make_fake_movie(1000, dt=0.02, mask_shape=(64, 64),
+                                 sigma=0.003, seed=0)
+
+# deconvolve it, learning alpha, beta and lambda
+n_best, C_best, LL, theta_best = deconvolve(
+    F, dt=0.02, verbosity=1, learn_theta=(0, 1, 1, 1, 0),
+    spikes_tol=1E-6, params_tol=1E-6
+)
+
+# plot the fit against the true parameters
+plotting.ground_truth_2D(F, n_best, C_best, theta_best, n, C, theta, 0.02,
+                         64, 64)
+```
+
+![Imgur](http://i.imgur.com/gBGuHBU.png)
 
 Reference
 ----------
