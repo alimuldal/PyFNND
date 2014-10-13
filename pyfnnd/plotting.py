@@ -87,6 +87,8 @@ def ground_truth_1D(F, n_hat, C_hat, theta_hat, n, C, theta, dt):
     sigma_hat, alpha_hat, beta_hat, lamb_hat, gamma_hat = theta_hat
     sigma, alpha, beta, lamb, gamma = theta
 
+    alpha, beta = (np.atleast_1d(a) for a in (alpha, beta))
+
     fig = plt.figure()
     gs = plt.GridSpec(4, 1)
     ax1 = fig.add_subplot(gs[0:2])
@@ -109,7 +111,7 @@ def ground_truth_1D(F, n_hat, C_hat, theta_hat, n, C, theta, dt):
 
     # true noise-free fluorescence
     axes[0].plot(t, F_real.sum(0), '-r', lw=2, label=r'$\alpha C+\beta$')
-    axes[0].legend(loc=1, fancybox=True, fontsize='large')
+    axes[0].legend(loc=1, ncol=3, fancybox=True, fontsize='large')
     axes[0].tick_params(labelbottom=False)
 
     # true spikes
