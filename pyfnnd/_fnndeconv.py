@@ -1,18 +1,14 @@
 import numpy as np
-from scipy import ndimage, signal
+from scipy import signal
 from itertools import izip
 import time
 import warnings
 from _tridiag_solvers import trisolve
 import plotting
+from utils import s2h
 
 DTYPE = np.float64
 EPS = np.finfo(DTYPE).eps
-
-
-import ipdb
-from matplotlib import pyplot as plt
-plt.ion()
 
 
 # joblib is an optional dependency, required only for processing multiple cells
@@ -288,7 +284,7 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
     if verbosity >= 1:
         time_taken = time.time() - tstart
-        print "Completed: %s" % _s2h(time_taken)
+        print "Completed: %s" % s2h(time_taken)
 
     sigma, alpha, beta, lamb, gamma = theta
 
@@ -592,55 +588,3 @@ def _init_theta(F, theta0, offset, dt=0.02, rate=1., tau=1.0):
         gamma = np.exp(-dt / tau)               # scalar
 
     return sigma, alpha, beta, lamb, gamma
-
-
-def _detrend(x, dt=0.02, stop_hz=0.01, order=5, plot=False):
-
-    orig_shape = x.shape
-    x = np.atleast_2d(x)
-
-    nyquist = 0.5 / dt
-    stop = stop_hz / nyquist
-
-    # b, a = signal.cheby2(order, atten, Wn=stop, btype='lowpass')
-    b, a = signal.butter(order, Wn=stop, btype='lowpass')
-
-    y = signal.filtfilt(b, a, x, axis=1)
-
-    if plot:
-        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
-        ax1.hold(True)
-        t = np.arange(x.shape[1]) * dt
-        ax1.plot(t, x.sum(0), '-b')
-        ax1.plot(t, y.sum(0), '-r', lw=2)
-        ax2.hold(True)
-        ax2.axhline(0, ls='-', color='k')
-        ax2.plot(t, (x - y).sum(0), '-b')
-
-    return (x - y).reshape(orig_shape)
-
-def _boxcar(F, dt=0.02, avg_win=1.0):
-
-    orig_shape = F.shape
-    F = np.atleast_2d(F)
-    npix, nt = F.shape
-
-    # boxcar filtering
-    win_len = max(1, avg_win / dt)
-    win = np.ones(win_len) / win_len
-    Fsmooth = ndimage.convolve1d(F, win, axis=1, mode='reflect')
-
-    return Fsmooth.reshape(orig_shape)
-
-
-def _s2h(ss):
-    """convert seconds to a pretty "d hh:mm:ss.s" format"""
-    mm, ss = divmod(ss, 60)
-    hh, mm = divmod(mm, 60)
-    dd, hh = divmod(hh, 24)
-    tstr = "%02i:%04.1f" % (mm, ss)
-    if hh > 0:
-        tstr = ("%02i:" % hh) + tstr
-    if dd > 0:
-        tstr = ("%id " % dd) + tstr
-    return tstr
