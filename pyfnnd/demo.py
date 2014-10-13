@@ -1,51 +1,11 @@
 import numpy as np
-from scipy import stats, signal
+from scipy import signal
 from _fnndeconv import deconvolve
+import plotting
 
-
-def make_fake_data(ncells, nframes, dt=(1. / 50), fr=0.5, tau=4.5,
-                   sigma=0.2, alpha=1., beta=0.):
-    """
-    Generate 1D fake fluorescence traces
-
-    Arguments:
-    ---------------------------------------------------------------------------
-        ncells:     number of traces to generate
-        nframes:    number of timebins to simulate
-        dt:         timestep (s)
-        fr:         mean firing rate (Hz)
-        tau:        time constant of decay in calcium concentration (s)
-        sigma:      SD of additive noise on fluorescence
-        alpha:      scaling parameter for fluorescence modulation
-        beta:       baseline fluorescence
-
-    Returns:
-    ---------------------------------------------------------------------------
-        F:          fluorescence [ncells, nframes]
-        C:          calcium concentration [ncells, nframes]
-        n:          spike train [ncells, nframes]
-        theta:      tuple of true model parameters [5,]
-
-    """
-
-    # poisson spikes
-    n = stats.poisson.rvs(fr * dt, size=(ncells, nframes))
-
-    # internal calcium dynamics
-    gamma = np.exp(-dt / tau)
-    C = signal.lfilter(np.r_[1], np.r_[1, -gamma], n, axis=1)
-
-    # noise
-    F = C + np.random.normal(loc=0., scale=sigma, size=C.shape)
-
-    lamb = fr
-    theta = (sigma, alpha, beta, lamb, gamma)
-
-    return F, C, n, theta
-
-def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
-                    bg_intensity=0.1, mask_sigma=30, dt=(1. / 50), fr=0.5,
-                    tau=4.5, sigma=0.8):
+def make_fake_movie(nframes, mask_shape=(64, 64), mask_center=None,
+                    bg_intensity=0.1, mask_sigma=10, dt=0.02, rate=1.0,
+                    tau=1., sigma=0.001, seed=None):
     """
     Generate 2D fake fluorescence movie
 
@@ -57,28 +17,33 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
         bg_intensity:   scalar, amplitude of (static) baseline fluorescence
         mask_sigma:     scalar, standard deviation of Gaussian mask
         dt:             timestep (s)
-        fr:             mean firing rate (Hz)
+        rate:           mean spike rate (Hz)
         tau:            time constant of decay in calcium concentration (s)
         sigma:          SD of additive noise on fluorescence
+        seed:           Seed for RNG
 
     Returns:
     ---------------------------------------------------------------------------
         F:          fluorescence [npixels, nframes]
         C:          calcium concentration [nframes,]
         n:          spike train [nframes,]
-        theta:      tuple of true model parameters [5,]
+        theta:      tuple of true model parameters:
+                    (sigma, alpha, beta, lambda, gamma)
 
     """
 
+    gen = np.random.RandomState(seed)
+
     # poisson spikes
-    n = stats.poisson.rvs(fr * dt, size=nframes)
+    n = gen.poisson(rate * dt, size=nframes)
 
     # internal calcium dynamics
     gamma = np.exp(-dt / tau)
     C = signal.lfilter(np.r_[1], np.r_[1, -gamma], n, axis=0)
 
-    # pixel weights (sum to 1)
+    # pixel weights (sum == 1)
     nr, nc = mask_shape
+    npix = nr * nc
     if mask_center is None:
         mask_center = (nc // 2., nr // 2.)
     a, b = mask_center
@@ -86,17 +51,17 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
     xs = (x - a) ** 2.
     ys = (y - b) ** 2.
     twoss = 2. * mask_sigma ** 2.
-    mask = (1. / (twoss * np.pi)) * np.exp(-1 * ((xs / twoss) + (ys / twoss)))
+    alpha = np.exp(-1 * ((xs / twoss) + (ys / twoss))).ravel()
+    alpha /= alpha.sum()
 
     # background fluorescence
-    background_fluor = np.random.randn(nr, nc) * bg_intensity
+    beta = gen.randn(npix) * bg_intensity
 
-    alpha = mask.ravel()
-    beta = background_fluor.ravel()
-    lamb = fr
+    # firing rate (spike probability per sec)
+    lamb = rate
 
     # spatially & temporally white noise
-    epsilon = np.random.normal(loc=0., scale=sigma, size=C.shape)
+    epsilon = gen.randn(npix, nframes) * sigma
 
     # simulated fluorescence
     F = C[None, :] * alpha[:, None] + beta[:, None] + epsilon
@@ -106,38 +71,27 @@ def make_fake_movie(nframes, mask_shape=(256, 256), mask_center=None,
     return F, C, n, theta
 
 
-# def make_demo_plots():
+def make_demo_plots():
 
-#     np.random.seed(0)
+    # single pixel
+    F, C, n, theta = make_fake_movie(1000, dt=0.02, mask_shape=(1, 1),
+                                     sigma=0.1, seed=0)
+    n_best, C_best, LL, theta_best = deconvolve(
+        F, dt=0.02, verbosity=1, learn_theta=(0, 1, 1, 0, 0),
+        spikes_tol=1E-3, params_tol=1E-6,
+    )
 
-#     s, c, f = make_fake_data(1, 10000)
-#     n_best, c_best, ll_best, theta_best = deconvolve(f, verbosity=1)
+    plotting.ground_truth_1D(F, n_best, C_best, theta_best, n, C, theta, 0.02)
 
-#     try:
-#         import matplotlib
-#         from matplotlib import pyplot as plt
-#         plt.ion()
-#     except ImportError:
-#         print "matplotlib is required for making the demo plots"
-#         return
-
-#     fig, ax = plt.subplots(2, 1, sharex=True)
-#     for aa in ax:
-#         aa.hold(True)
-
-#     t = np.arange(10000) * 0.02
-
-#     real, = ax[0].plot(t, f, 'b')
-#     inferred, = ax[0].plot(t, c_best + theta_best[1], 'r')
-#     ax[0].set_ylabel('Fluorescence')
-
-#     ax[1].plot(t, s, 'b')
-#     ax[1].plot(t, n_best, 'r')
-
-#     ax[1].set_xlabel('Time (sec)')
-#     ax[1].set_ylabel('Spikes')
-
-#     plt.show()
+    # 2D movie
+    F, C, n, theta = make_fake_movie(1000, dt=0.02, mask_shape=(64, 64),
+                                     sigma=0.001, seed=1)
+    n_best, C_best, LL, theta_best = deconvolve(
+        F, dt=0.02, verbosity=1, learn_theta=(0, 1, 1, 0, 0),
+        spikes_tol=1E-3, params_tol=1E-6,
+    )
+    plotting.ground_truth_2D(F, n_best, C_best, theta_best, n, C, theta, 0.02,
+                             64, 64)
 
 if __name__ == "__main__":
     make_demo_plots()
