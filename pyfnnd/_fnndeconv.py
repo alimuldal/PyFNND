@@ -189,7 +189,7 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
                                        spikes_maxiter, verbosity)
 
     # pseudo-EM iterations to optimize the model parameters
-    if np.any(learn_theta):
+    if any(learn_theta):
 
         if verbosity >= 1:
             print('params: iter=%3i; LL=%12.2f; delta_LL= N/A' % (0, LL))
@@ -206,6 +206,10 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
             # a 'full' parameter update, as used in the Vogelstein paper/code
             theta_up = _update_theta(n_hat, C_hat, F, theta, dt, learn_theta)
 
+            # we might want to make changes to a copy of C_hat in the
+            # linesearch to get out of local minima
+            C0 = C_hat.copy()
+
             # backtracking linesearch for the biggest step size that improves
             # the LL
             while not terminate_linesearch:
@@ -218,8 +222,8 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
                 # get the new n_hat, C_hat, and LL
                 n1, C_hat1, LL1 = _get_MAP_spikes(
-                    F, C_hat, theta1, dt, spikes_tol,
-                    spikes_maxiter, verbosity
+                    F, C0, theta1, dt, spikes_tol, spikes_maxiter,
+                    verbosity
                 )
 
                 # new solution found
@@ -228,16 +232,22 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
                 # terminate if the step size gets too small without seeing any
                 # improvement in LL
-                elif s < EPS:
+                elif s < 0.01:
                     if verbosity >= 1:
-                        print('params: terminated linesearch: s < EPS on'
+                        print('params: terminated linesearch: s < 0.01 on'
                               ' %i iterations' % nloop2)
                     terminate_linesearch = True
                     done = True
 
-                # reduce the step size, increment the counter
-                s /= 3.
-                nloop2 += 1
+                else:
+                    # in order to get out of local minima it can be helpful to
+                    # increase C_hat a bit to ensure that n_hat is non-zero
+                    # everywhere
+                    C0 *= 1.5
+
+                    # reduce the step size, increment the counter
+                    s /= 2.
+                    nloop2 += 1
 
             # test for convergence
             delta_LL = -((LL1 - LL) / LL)
@@ -373,13 +383,14 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-3, maxiter=100, verbosity=0):
             d = _direction(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
                            grad_lnprior, z)
 
-            # ensure that s starts sufficiently small to guarantee that n_hat
-            # stays positive
+            terminate_linesearch = False
+
+            # ensure that step size starts sufficiently small to guarantee that
+            # n_hat stays positive
             hit = -n_hat / (d[1:] - gamma * d[:-1])
-            within_bounds = (hit >= 0)
+            within_bounds = (hit >= EPS)
 
             if np.any(within_bounds):
-                terminate_linesearch = False
                 s = min(1., 0.99 * np.min(hit[within_bounds]))
             else:
                 # force an early termination at this barrier weight if there is
@@ -410,38 +421,46 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-3, maxiter=100, verbosity=0):
                 LL1 = _post_LL(n_hat, D, scale_var, lD, z)
                 # assert not np.any(np.isnan(LL1)), "nan LL"
 
+                if verbosity >= 2:
+                    print('spikes: iter=%3i, %3i, %3i; z=%6.4f; s=%6.4f;'
+                          ' LL=%13.4f' % (nloop1, nloop2, nloop3, z, s, LL1))
+
                 # only update C_hat & LL if LL improved
                 if LL1 > LL:
                     LL, C_hat = LL1, C_hat1
                     terminate_linesearch = True
 
-                # terminate when the step size is essentially zero but we're
-                # still not improving (almost never happens in practice)
-                elif s < EPS:
+                # terminate when the step size gets too small without making
+                # progress
+                elif s < 1E-3:
                     if verbosity >= 2:
-                        print('terminated linesearch: s < EPS on %i iterations'
-                              % nloop3)
+                        print('terminated linesearch: s < 1E-3 on %i '
+                              'iterations' % nloop3)
                     terminate_linesearch = True
 
-                if verbosity >= 2:
-                    print('spikes: iter=%3i, %3i, %3i; z=%6.4f; s=%6.4f;'
-                          ' LL=%13.4f' % (nloop1, nloop2, nloop3, z, s, LL))
-
-                # reduce the step size
-                s /= 5.
-                nloop3 += 1
+                else:
+                    # reduce the step size
+                    s /= 2.
+                    nloop3 += 1
 
             nloop2 += 1
 
         # test for convergence
         delta_LL = -(LL - LL_prev) / LL_prev
 
+        # keep new params
+        LL_prev, C_hat_prev = LL, C_hat
+
+        # increment the outer loop counter, reduce the barrier weight
+        nloop1 += 1
+        z /= 2.
+
         if (delta_LL < tol):
             terminate_interior = True
 
-        elif z < EPS:
+        elif z < 1E-6:
             if verbosity >= 2:
-                print 'MAP spike train failed to converge before z -> 0'
+                print 'MAP spike train failed to converge before z < 1E-6'
             terminate_interior = True
 
         elif nloop1 > maxiter:
@@ -449,11 +468,6 @@ def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-3, maxiter=100, verbosity=0):
                 print 'MAP spike train failed to converge within maxiter'
             terminate_interior = True
 
-        LL_prev, C_hat_prev = LL, C_hat
-
-        # increment the outer loop counter, reduce the barrier weight
-        nloop1 += 1
-        z /= 10.
 
     return n_hat, C_hat, LL
 
