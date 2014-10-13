@@ -43,7 +43,7 @@ Test plots
     from pyfnnd import demo
     demo.make_demo_plots()
 
-[Imgur](http://i.imgur.com/xfJhO0Z.png)
+![Imgur](http://i.imgur.com/xfJhO0Z.png)
 
 Reference
 ----------
