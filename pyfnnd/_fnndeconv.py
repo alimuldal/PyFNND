@@ -26,7 +26,7 @@ try:
 
         Arguments:
         -----------------------------------------------------------------------
-        F: ndarray, [nc, nt]
+        F: ndarray, [nc, nt] or [nc, npix, nt]
             measured fluorescence values
 
         n_jobs: int scalar
@@ -47,18 +47,17 @@ try:
         LL: ndarray, [nc,]
             posterior log-likelihood of F given n_hat_best and theta_best
 
-        theta_best: ndarray, [nc, 5]
+        theta_best: tuple, [nc,]
             model parameters, updated according to learn_theta
         """
-
-        F = np.atleast_2d(F)
-        nc, nt = F.shape
 
         pool = Parallel(n_jobs=n_jobs, verbose=disp, pre_dispatch='n_jobs * 2')
 
         results = pool(delayed(deconvolve)
                        (rr, *fnn_args, **fnn_kwargs) for rr in F)
-        n_hat, C_hat, LL, theta = (np.vstack(a) for a in izip(*results))
+
+        n_hat, C_hat, LL, theta = izip(*results)
+        n_hat, C_hat, LL = (np.vstack(a) for a in (n_hat, C_hat, LL))
 
         return n_hat, C_hat, LL, theta
 
@@ -82,10 +81,10 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     spike train, given the fluorescence signal F, and the model:
 
     C_{t} = gamma * C_{t-1} + n_{t},            n_{t} ~ Poisson(lambda * dt)
-    F_{t} = C_{t} + beta + epsilon,             epsilon ~ N(0, sigma)
+    F_{t} = alpha * C_{t} + beta + epsilon,     epsilon ~ N(0, sigma)
 
-    It is also possible to estimate the model parameters sigma, beta and lambda
-    from the data using pseudo-EM updates.
+    It is also possible to estimate the model parameters sigma, alpha, beta and
+    lambda from the data using pseudo-EM updates.
 
     Arguments:
     ---------------------------------------------------------------------------
@@ -217,7 +216,7 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
                 # increment the parameter values according to the current step
                 # size
                 theta1 = tuple(
-                    (p + (p1 - p) * s for p, p1 in zip(theta, theta_up))
+                    (p + (p1 - p) * s for p, p1 in izip(theta, theta_up))
                 )
 
                 # get the new n_hat, C_hat, and LL
@@ -572,17 +571,17 @@ def _init_theta(F, theta0, offset, dt=0.02, rate=1., tau=1.0):
 
     # amplitude
     if alpha is None:
-        alpha = med_F                           # vector
+        alpha = np.atleast_1d(med_F)            # vector
 
     # baseline
     if beta is None:
         if npix == 1:
             beta = np.atleast_1d(np.percentile(F, 5., axis=1))
         else:
-            beta = med_F
+            beta = np.atleast_1d(med_F)
     else:
         # beta should absorb the offset parameter
-        beta = beta - offset
+        beta = np.atleast_1d(beta - offset)
 
     # firing rate
     if lamb is None:
