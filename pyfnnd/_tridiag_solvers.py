@@ -5,16 +5,21 @@ from ctypes.util import find_library
 from numpy.ctypeslib import ndpointer
 
 # try and find a LAPACK shared library
+dgtsv, sgtsv = None, None
 for name in ('openblas', 'lapack'):
     libname = find_library(name)
     if libname:
-        break
-if libname is None:
+        lapack_lib = ctypes.cdll.LoadLibrary(libname)
+        try:
+            dgtsv = lapack_lib.dgtsv_
+            sgtsv = lapack_lib.sgtsv_
+            break
+        except AttributeError:
+            # occurs if the library doesn't define the necessary symbols
+            continue
+if None in (dgtsv, sgtsv):
     raise EnvironmentError('Could not locate a LAPACK shared library', 2)
 
-lapack_lib = ctypes.cdll.LoadLibrary(libname)
-dgtsv = lapack_lib.dgtsv_
-sgtsv = lapack_lib.sgtsv_
 
 # pointer ctypes
 _c_int_p = ctypes.POINTER(ctypes.c_int)
