@@ -9,7 +9,7 @@ This is a Python implementation of Joshua Vogelstein's [fast non-negative deconv
 
 where `n_best` is the maximum a posteriori estimate for the most likely spike train, given the fluorescence signal `F`, and the model:
 
-    C_{t} = gamma*C_{t-1} + n_{t},                          n_{t} ~ Exponential(lambda * dt)
+    C_{t} = gamma*C_{t-1} + n_{t},                          n_{t} ~ Exponential(lambda*dt)
     F_{p,t} = alpha_{p}*C_{t} + beta_{p} + epsilon_{p,t},   epsilon ~ N(0, sigma)
 
 It is also possible to estimate the model parameters sigma, alpha, beta and lambda from the data using pseudo-EM updates.
@@ -25,6 +25,7 @@ Dependencies
 -------------
 * `numpy`
 * `scipy`
+* `cython`
 * `matplotlib`
 * `joblib` - optional, required for parallel processing
 * A shared LAPACK library (source is available from [here](http://www.netlib.org/lapack/#_software); Ubuntu users can simply `$ sudo apt-get install liblapack`)
@@ -45,7 +46,7 @@ from pyfnnd import deconvolve, demo, plotting
 
 # synthetic fluorescence movie
 F, C, n, theta = demo.make_fake_movie(1000, dt=0.02, mask_shape=(64, 64),
-                                 sigma=0.003, seed=0)
+                                      sigma=0.003, seed=0)
 
 # deconvolve it, learning alpha, beta and lambda
 n_best, C_best, LL, theta_best = deconvolve(
