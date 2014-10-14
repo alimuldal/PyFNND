@@ -25,7 +25,6 @@ Dependencies
 -------------
 * `numpy`
 * `scipy`
-* `cython`
 * `matplotlib`
 * `joblib` - optional, required for parallel processing
 * A shared LAPACK library (source is available from [here](http://www.netlib.org/lapack/#_software); Ubuntu users can simply `$ sudo apt-get install liblapack`)

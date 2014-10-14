@@ -4,8 +4,6 @@ from ctypes import byref
 from ctypes.util import find_library
 from numpy.ctypeslib import ndpointer
 
-import _cy_trisolve
-
 # try and find a LAPACK shared library
 for name in ('openblas', 'lapack'):
     libname = find_library(name)
@@ -24,12 +22,12 @@ _c_float_p = ctypes.POINTER(ctypes.c_float)
 _c_double_p = ctypes.POINTER(ctypes.c_double)
 
 
-def trisolve(dl, d, du, b, inplace=False, force_cy=False):
+def trisolve(dl, d, du, b, inplace=False):
     """
-    A generalized version of the tridiagonal matrix (Thomas) algorithm for
-    solving tridiagonal systems of equations:
+    The tridiagonal matrix (Thomas) algorithm for solving tridiagonal systems
+    of equations:
 
-        a_{i}x_{i-k} + b_{i}x_{i} + c_{i}x_{i+k} = y_{i}
+        a_{i}x_{i-1} + b_{i}x_{i} + c_{i}x_{i+1} = y_{i}
 
     in matrix form:
         Mx = b
@@ -38,12 +36,12 @@ def trisolve(dl, d, du, b, inplace=False, force_cy=False):
 
     Arguments:
     -----------
-        dl: (n - k,) vector
-            the kth lower diagonal of M
+        dl: (n - 1,) vector
+            the lower diagonal of M
         d: (n,) vector
             the main diagonal of M
-        du: (n - k,) vector
-            the kth upper diagonal of M
+        du: (n - 1,) vector
+            the upper diagonal of M
         b: (n,) vector
             the result of Mx
         inplace:
@@ -61,11 +59,10 @@ def trisolve(dl, d, du, b, inplace=False, force_cy=False):
     http://www.netlib.org/lapack/explore-html/d1/db3/dgtsv_8f.html
     """
 
-    if (dl.shape[0] != du.shape[0] or dl.shape[0] >= d.shape[0]
+    if (dl.shape[0] != du.shape[0] or (d.shape[0] != dl.shape[0] + 1)
             or d.shape[0] != b.shape[0]):
         raise ValueError('Invalid diagonal shapes')
 
-    k = d.shape[0] - dl.shape[0]
     bshape_in = b.shape
     rtype = np.result_type(dl, d, du, b)
 
@@ -81,13 +78,8 @@ def trisolve(dl, d, du, b, inplace=False, force_cy=False):
     dl, d, du, b = (np.array(v, dtype=rtype, copy=False, order='F')
                     for v in (dl, d, du, b))
 
-    # use custom Cython implementation
-    if (k > 1) or force_cy:
-        _cy_trisolve.trisolve_offset(dl, d, du, b)
-
     # use the LAPACK implementation
-    else:
-        _lapack_trisolve(dl, d, du, b, rtype)
+    _lapack_trisolve(dl, d, du, b, rtype)
 
     return b.reshape(bshape_in)
 
