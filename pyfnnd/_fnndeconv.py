@@ -309,7 +309,7 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     return n_hat, C_hat, LL, theta
 
 
-def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
+def _get_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     """
     Used internally by deconvolve to compute the maximum a posteriori
     spike train for a given set of fluorescence traces and model parameters.
@@ -394,7 +394,7 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
                 s = -1
                 terminate_interior = True
                 if verbosity >= 2:
-                    print ("terminating: no step size will keep n_hat >= 0")
+                    print("terminating: no step size will keep n_hat >= 0")
 
             nloop3 = 0
 
@@ -463,7 +463,6 @@ def _estimate_MAP_spikes(F, C_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0
                 print 'MAP spike train failed to converge within maxiter'
             terminate_interior = True
 
-
     return n_hat, C_hat, LL
 
 
@@ -483,7 +482,7 @@ def _post_LL(n_hat, D, scale_var, lD, z):
 
 
 def _direction(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
-                grad_lnprior, z):
+               grad_lnprior, z):
 
     # gradient
     n_term = np.zeros(grad_lnprior.shape[0])
@@ -548,7 +547,7 @@ def _update_theta(n_hat, C_hat, F, theta, dt, learn_theta):
     return (sigma, alpha, beta, lamb, gamma)
 
 
-def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
+def _init_theta(F, theta0, offset, dt=0.02, rate=1., tau=1.0):
 
     npix, nt = F.shape
     sigma, alpha, beta, lamb, gamma = theta0
@@ -579,8 +578,9 @@ def _init_theta(F, dt=0.02, hz=0.5, tau=1.0):
         # beta should absorb the offset parameter
         beta = np.atleast_1d(beta - offset)
 
-    # rate parameter
-    lamb = hz                               # scalar
+    # firing rate
+    if lamb is None:
+        lamb = rate                             # scalar
 
     # decay parameter (fraction of remaining fluorescence after one time step)
     if gamma is None:
