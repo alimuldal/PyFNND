@@ -33,7 +33,11 @@ PyFNND has been tested on machines running Ubuntu Linux (14.04), and using `nump
 
 Installation
 ---------------
-From the root of the source distribution, simply call
+Install using `pip`:
+
+    $ pip install pyfnnd
+
+Or from the root of the source distribution, simply call
 
     $ python setup.py install
 
