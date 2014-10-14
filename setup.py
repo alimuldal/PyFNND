@@ -16,8 +16,7 @@ setup(
     author='Alistair Muldal',
     author_email='alistair.muldal@pharm.ox.ac.uk',
     description='A Python implementation of fast non-negative deconvolution',
-    package_dir={'':'pyfnnd'},
-    py_modules=['_fnndeconv', 'demo', '_tridiag_solvers'],
+    packages=['pyfnnd'],
     cmdclass={'build_ext': build_ext},
     ext_modules=[cy_trisolve],
 )
