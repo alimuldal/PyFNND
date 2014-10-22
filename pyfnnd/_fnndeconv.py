@@ -62,10 +62,11 @@ except ImportError:
 
 
 def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
-               learn_theta=((0,) * 5), params_tol=1E-3, spikes_tol=1E-3,
-               params_maxiter=20, spikes_maxiter=100, verbosity=0, plot=False,
-               frame_shape=None):
+               learn_theta=((0,) * 5), norm_alpha=True, params_tol=1E-3,
+               spikes_tol=1E-3, params_maxiter=20, spikes_maxiter=100,
+               verbosity=0, plot=False, frame_shape=None):
     """
+
     Fast Non-Negative Deconvolution
     ---------------------------------------------------------------------------
     This function uses an interior point method to solve the following
@@ -109,6 +110,10 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
         specifies which of the model parameters to attempt learn via pseudo-EM
         iterations. currently gamma cannot be optimised.
 
+    norm_alpha: bool
+        if True (default), we impose that sum(alpha) == 1 by scaling n_hat and
+        C_hat
+
     spikes_tol: float scalar
         termination condition for interior point spike train estimation:
             params_tol > abs((LL_prev - LL) / LL)
@@ -138,10 +143,8 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     ---------------------------------------------------------------------------
     n_hat_best: ndarray, [nt]
         MAP estimate of the most likely spike train
-
     C_hat_best: ndarray, [nt]
         estimated intracellular calcium concentration (A.U.)
-
     LL_best: float scalar
         posterior log-likelihood of F given n_hat_best and theta_best
 
@@ -287,6 +290,14 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
         print "Completed: %s" % s2h(time_taken)
 
     sigma, alpha, beta, lamb, gamma = theta
+
+    # we can impose that sum(alpha) == 1 by scaling C_hat and n_hat to
+    # compensate
+    if norm_alpha:
+        alpha_sum = np.sum(alpha)
+        alpha /= alpha_sum
+        C_hat *= alpha_sum
+        n_hat = C_hat[1:] - gamma * C_hat[:-1]
 
     # correct for the offset we originally applied to F
     beta = beta + offset
