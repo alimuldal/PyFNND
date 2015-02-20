@@ -143,8 +143,10 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     ---------------------------------------------------------------------------
     n_hat_best: ndarray, [nt]
         MAP estimate of the most likely spike train
+
     C_hat_best: ndarray, [nt]
         estimated intracellular calcium concentration (A.U.)
+
     LL_best: float scalar
         posterior log-likelihood of F given n_hat_best and theta_best
 
@@ -165,7 +167,7 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     F = np.atleast_2d(F)
     npix, nt = F.shape
 
-    # ensure that C_hat is non-negative
+    # ensure that F is non-negative
     offset = F.min() - EPS
     F = F - offset
 
@@ -279,8 +281,9 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
                 done = True
 
             if done:
-                print "Last delta log-likelihood:\t%8.4g" % delta_LL
-                print "Best posterior log-likelihood:\t%11.4f" % LL
+                if verbosity >= 1:
+                    print "Last delta log-likelihood:\t%8.4g" % delta_LL
+                    print "Best posterior log-likelihood:\t%11.4f" % LL
 
             # increment the loop counter
             nloop1 += 1
@@ -297,6 +300,8 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
         alpha_sum = np.sum(alpha)
         alpha /= alpha_sum
         C_hat *= alpha_sum
+
+        # needs to be constrained n_hat can be negative!
         n_hat = C_hat[1:] - gamma * C_hat[:-1]
 
     # correct for the offset we originally applied to F
