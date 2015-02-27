@@ -319,33 +319,32 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     grad_lnprior[1:] = lD
     grad_lnprior[:-1] -= lD * gamma
 
-    # initial estimate of spike probabilities (should be strictly non-negative)
+    # initialize the weight of the barrier term to 1
+    z = 1.
+
+    # initial estimate of spike probabilities
     n_hat = c_hat[1:] - gamma * c_hat[:-1]
     # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
     # (actual - predicted) fluorescence
     res = c - alpha_ss * c_hat
 
-    # initialize the weight of the barrier term to 1
-    z = 1.
-
-    # compute initial posterior log-likelihood of the fluorescence
-    LL = _post_LL(n_hat, res, scale_var, lD, z)
+    # best overall posterior log-likelihood of the fluorescence
+    LL_best = _post_LL(n_hat, res, scale_var, lD, z)
+    LL_barrier = LL_best
 
     nloop1 = 0
-    LL_prev, c_hat_prev = LL, c_hat
     terminate_interior = False
 
     # in the outer loop we'll progressively reduce the weight of the barrier
     # term and check the interior point termination criteria
     while not terminate_interior:
 
-        s = 1.
-        d = 1.
         nloop2 = 0
+        terminate_barrier = False
 
         # converge for this barrier weight
-        while (np.linalg.norm(d) > D_TOL) and (s > S_TOL):
+        while not terminate_barrier:
 
             # by projecting everything onto alpha, we reduce this to a 1D
             # vector norm
@@ -371,8 +370,8 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
                 # if there is no step size that will keep n_hat >= 0, just
                 # reduce the barrier weight and try again
                 terminate_linesearch = True
-                s = -1
-                terminate_interior = True
+                terminate_barrier = True
+
                 if verbosity >= 2:
                     print("skipping linesearch: no positive step size will "
                           "keep n_hat >= 0")
@@ -384,56 +383,57 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
             while not terminate_linesearch:
 
                 # update estimated calcium
-                c_hat1 = c_hat + (s * d)
+                c_hat_line = c_hat + (s * d)
 
                 # update spike probabilities
-                n_hat = c_hat1[1:] - gamma * c_hat1[:-1]
-                # assert not np.any(n_hat < 0), "spike probabilities < 0"
+                n_hat_line = c_hat_line[1:] - gamma * c_hat_line[:-1]
+                # assert not np.any(n_hat_line < 0), "spike probabilities < 0"
 
                 # (actual - predicted) fluorescence
-                res = c - alpha_ss * c_hat1
+                res = c - alpha_ss * c_hat_line
 
                 # compute the new posterior log-likelihood
-                LL1 = _post_LL(n_hat, res, scale_var, lD, z)
+                LL_line = _post_LL(n_hat_line, res, scale_var, lD, z)
                 # assert not np.any(np.isnan(LL1)), "nan LL"
 
                 if verbosity >= 2:
                     print('spikes: iter=%3i, %3i, %3i; z=%-10.4g; s=%-10.4g;'
                           ' LL=%-10.4g'
-                          % (nloop1, nloop2, nloop3, z, s, LL1))
+                          % (nloop1, nloop2, nloop3, z, s, LL_line))
 
                 # only update c_hat & LL if LL improved
-                if LL1 > LL:
-                    LL, c_hat = LL1, c_hat1
+                if LL_line > LL_barrier:
+                    LL_barrier, n_hat, c_hat = LL_line, n_hat_line, c_hat_line
                     terminate_linesearch = True
 
-                # terminate when the step size gets too small without making
-                # progress
+                # if the step size gets too small without making any progress,
+                # we terminate the linesearch and reduce the barrier weight
                 elif s < S_TOL:
                     if verbosity >= 2:
                         print('--> terminated linesearch: s < %.3g on %i '
                               'iterations' % (S_TOL, nloop3))
                     terminate_linesearch = True
+                    terminate_barrier = True
 
                 else:
                     # reduce the step size
                     s /= S_FAC
                     nloop3 += 1
 
+            # if d gets too small, reduce the barrier weight
+            if (np.linalg.norm(d) < D_TOL):
+                terminate_barrier = True
+
             nloop2 += 1
 
-        # test for convergence
-        delta_LL = -(LL - LL_prev) / LL_prev
+        # only test for convergence if we were actually able to enter the
+        # linesearch
+        if nloop3:
+            delta_LL = -(LL_barrier - LL_best) / LL_best
+            LL_best = LL_barrier
 
-        # keep new params
-        LL_prev, c_hat_prev = LL, c_hat
-
-        # increment the outer loop counter, reduce the barrier weight
-        nloop1 += 1
-        z /= Z_FAC
-
-        if (delta_LL < tol):
-            terminate_interior = True
+            if (delta_LL < tol):
+                terminate_interior = True
 
         elif z < Z_TOL:
             if verbosity >= 2:
@@ -447,8 +447,11 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
                        % maxiter)
             terminate_interior = True
 
-    return n_hat, c_hat, LL
+        # increment the outer loop counter, reduce the barrier weight
+        nloop1 += 1
+        z /= Z_FAC
 
+    return n_hat, c_hat, LL_best
 
 
 def _post_LL(n_hat, res, scale_var, lD, z):
