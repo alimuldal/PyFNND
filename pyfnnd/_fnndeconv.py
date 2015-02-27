@@ -357,21 +357,25 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
             terminate_linesearch = False
 
-            # ensure that step size starts sufficiently small to guarantee that
-            # n_hat stays positive
-            hit = -n_hat / (d[1:] - gamma * d[:-1])
-            within_bounds = (hit >= EPS)
+            # find the largest step we can take in direction d without
+            # violating the non-negativity constraint on n_hat
+            s_upper_bnd = -n_hat / (d[1:] - gamma * d[:-1])
 
-            if np.any(within_bounds):
-                s = min(1., 0.99 * np.min(hit[within_bounds]))
+            # we are only interested in positive step sizes
+            feasible = (s_upper_bnd > 0)
+
+            if np.any(feasible):
+                # largest allowable step size is 1.
+                s = min(1., 0.999 * np.min(s_upper_bnd[feasible]))
             else:
-                # force an early termination at this barrier weight if there is
-                # no step size that will keep n_hat >= 0
+                # if there is no step size that will keep n_hat >= 0, just
+                # reduce the barrier weight and try again
                 terminate_linesearch = True
                 s = -1
                 terminate_interior = True
                 if verbosity >= 2:
-                    print("terminating: no step size will keep n_hat >= 0")
+                    print("skipping linesearch: no positive step size will "
+                          "keep n_hat >= 0")
 
             nloop3 = 0
 
