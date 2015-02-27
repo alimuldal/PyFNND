@@ -307,12 +307,8 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
     # we project everything onto the alpha mask so that we only ever have to
     # deal with 1D vector norms
-    alpha_F = alpha.dot(F)
-    alpha_ss = alpha.dot(alpha)
-    alpha_beta = alpha.dot(beta)
-    alpha_F_bl = alpha_F - alpha_beta
-
-    F_bl = F - beta[:, None]
+    alpha_ss = np.dot(alpha, alpha)
+    c = np.dot(alpha, F) - np.dot(alpha, beta)
 
     # used for computing the LL and gradient
     scale_var = 1. / (2 * sigma * sigma)
@@ -328,13 +324,13 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
     # (actual - predicted) fluorescence
-    D = F_bl - alpha[:, None] * c_hat[None, :]
+    res = c - alpha_ss * c_hat
 
     # initialize the weight of the barrier term to 1
     z = 1.
 
     # compute initial posterior log-likelihood of the fluorescence
-    LL = _post_LL(n_hat, D, scale_var, lD, z)
+    LL = _post_LL(n_hat, res, scale_var, lD, z)
 
     nloop1 = 0
     LL_prev, c_hat_prev = LL, c_hat
@@ -353,7 +349,7 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
             # by projecting everything onto alpha, we reduce this to a 1D
             # vector norm
-            res = alpha_F_bl - alpha_ss * c_hat
+            res = c - alpha_ss * c_hat
 
             # compute direction of newton step
             d = _direction(n_hat, res, alpha_ss, gamma, scale_var,
@@ -391,10 +387,10 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
                 # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
                 # (actual - predicted) fluorescence
-                D = F_bl - alpha[:, None] * c_hat1[None, :]
+                res = c - alpha_ss * c_hat1
 
                 # compute the new posterior log-likelihood
-                LL1 = _post_LL(n_hat, D, scale_var, lD, z)
+                LL1 = _post_LL(n_hat, res, scale_var, lD, z)
                 # assert not np.any(np.isnan(LL1)), "nan LL"
 
                 if verbosity >= 2:
@@ -450,17 +446,18 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     return n_hat, c_hat, LL
 
 
-def _post_LL(n_hat, D, scale_var, lD, z):
+
+def _post_LL(n_hat, res, scale_var, lD, z):
 
     # barrier term
     with np.errstate(invalid='ignore'):     # suppress log(0) error messages
         barrier = np.log(n_hat).sum()       # this is currently a bottleneck
 
     # sum of squared (predicted - actual) fluorescence
-    D_ss = D.ravel().dot(D.ravel())         # fast sum-of-squares
+    res_ss = res.ravel().dot(res.ravel())   # fast sum-of-squares
 
     # weighted posterior log-likelihood of the fluorescence
-    LL = -(scale_var * D_ss) - (n_hat.sum() / lD) + (z * barrier)
+    LL = -(scale_var * res_ss) - (n_hat.sum() / lD) + (z * barrier)
 
     return LL
 
@@ -528,8 +525,8 @@ def _update_theta(n_hat, c_hat, F, theta, dt, learn_theta, decimate=0):
         beta = (F - alpha[:, None] * c_hat[None, :]).sum(1) / nt
 
     if learn_sigma:
-        D = F - (alpha[:, None] * c_hat[None, :] - beta[:, None])
-        ssd = D.ravel().dot(D.ravel())      # fast sum-of-squares
+        res = F - (alpha[:, None] * c_hat[None, :] - beta[:, None])
+        ssd = res.ravel().dot(res.ravel())  # fast sum-of-squares
         sigma = np.sqrt(ssd / nt)           # RMS error
 
     if learn_lamb:
