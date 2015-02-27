@@ -192,7 +192,7 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     if any(learn_theta):
 
         if verbosity >= 1:
-            print('params: iter=%3i; LL=%12.2f; delta_LL= N/A' % (0, LL))
+            print('params: iter=%3i; LL=%-10.4g; delta_LL= N/A' % (0, LL))
 
         nloop1 = 1
         done = False
@@ -254,7 +254,7 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
             delta_LL = -((LL1 - LL) / LL)
 
             if verbosity >= 1:
-                print('params: iter=%3i; LL=%12.2f; delta_LL= %8.4g'
+                print('params: iter=%3i; LL=%-10.4g; delta_LL=%-10.4g'
                       % (nloop1, LL1, delta_LL))
 
             if delta_LL > 0:
@@ -283,8 +283,8 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
             if done:
                 if verbosity >= 1:
-                    print "Last delta log-likelihood:\t%8.4g" % delta_LL
-                    print "Best posterior log-likelihood:\t%11.4f" % LL
+                    print "Last delta log-likelihood:\t%-10.4g" % delta_LL
+                    print "Best posterior log-likelihood:\t%10.3f" % LL
 
             # increment the loop counter
             nloop1 += 1
@@ -428,8 +428,9 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
                 # assert not np.any(np.isnan(LL1)), "nan LL"
 
                 if verbosity >= 2:
-                    print('spikes: iter=%3i, %3i, %3i; z=%6.4f; s=%6.4f;'
-                          ' LL=%13.4f' % (nloop1, nloop2, nloop3, z, s, LL1))
+                    print('spikes: iter=%3i, %3i, %3i; z=%-10.4g; s=%-10.4g;'
+                          ' LL=%-10.4g'
+                          % (nloop1, nloop2, nloop3, z, s, LL1))
 
                 # only update c_hat & LL if LL improved
                 if LL1 > LL:
@@ -471,7 +472,8 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
         elif nloop1 > maxiter:
             if verbosity >= 2:
-                print 'MAP spike train failed to converge within maxiter'
+                print('MAP spike train failed to converge within maxiter (%i)'
+                       % maxiter)
             terminate_interior = True
 
     return n_hat, c_hat, LL
