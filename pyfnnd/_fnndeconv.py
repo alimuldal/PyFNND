@@ -63,8 +63,8 @@ except ImportError:
 
 def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
                learn_theta=((0,) * 5), norm_alpha=True, params_tol=1E-3,
-               spikes_tol=1E-3, params_maxiter=20, spikes_maxiter=100,
-               verbosity=0):
+               spikes_tol=1E-3, spikes_maxiter=100, params_maxiter=20,
+               decimate=0, verbosity=0):
     """
 
     Fast Non-Negative Deconvolution
@@ -127,6 +127,12 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     params_maxiter: int scalar
         maximum number of pseudo-EM iterations to estimate model parameters
 
+    decimate: int scalar
+        option to decimate the input array over time when initalizing and
+        updating the theta parameters, i.e. Fd = F[:, ::decimate]. this can
+        be useful for very large input arrays. the default value (0) means no
+        decimation is performed.
+
     verbosity: int scalar
         0: no convergence messages (default)
         1: convergence messages for model parameters
@@ -164,7 +170,8 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     offset = F.min() - EPS
     F = F - offset
 
-    theta = _init_theta(F, theta0, offset, dt=dt, rate=rate, tau=tau)
+    theta = _init_theta(F, theta0, offset, dt=dt, rate=rate, tau=tau,
+                        decimate=decimate)
 
     sigma, alpha, beta, lamb, gamma = theta
 
@@ -197,7 +204,8 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
             terminate_linesearch = False
 
             # a 'full' parameter update, as used in the Vogelstein paper/code
-            theta_up = _update_theta(n_hat, c_hat, F, theta, dt, learn_theta)
+            theta_up = _update_theta(n_hat, c_hat, F, theta, dt, learn_theta,
+                                     decimate)
 
             # we might want to make changes to a copy of c_hat in the
             # linesearch to get out of local minima
@@ -509,7 +517,12 @@ def _direction(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
     return d
 
 
-def _update_theta(n_hat, c_hat, F, theta, dt, learn_theta):
+def _update_theta(n_hat, c_hat, F, theta, dt, learn_theta, decimate=0):
+
+    if decimate > 0:
+        c_hat = c_hat[::decimate]
+        n_hat = n_hat[::decimate]
+        F = F[:, ::decimate]
 
     sigma, alpha, beta, lamb, gamma = theta
     learn_sigma, learn_alpha, learn_beta, learn_lamb, learn_gamma = learn_theta
@@ -548,9 +561,12 @@ def _update_theta(n_hat, c_hat, F, theta, dt, learn_theta):
     return (sigma, alpha, beta, lamb, gamma)
 
 
-def _init_theta(F, theta0, offset, dt=0.02, rate=1., tau=1.0):
+def _init_theta(F, theta0, offset, dt=0.02, rate=1., tau=1.0, decimate=0):
 
-    npix, nt = F.shape
+    if decimate > 0:
+        F = F[:, ::decimate]
+
+    npix = F.shape[0]
     sigma, alpha, beta, lamb, gamma = theta0
 
     if None in (sigma, alpha, beta):
