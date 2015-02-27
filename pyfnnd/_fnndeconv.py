@@ -9,6 +9,19 @@ from utils import s2h
 DTYPE = np.float64
 EPS = np.finfo(DTYPE).eps
 
+# threshold minimum step size for terminating backtracking linesearch
+S_TOL = 1E-12
+
+# factors by which step size and barrier are decreased on each iteration
+S_FAC = 5.
+Z_FAC = 10.
+
+# threshold minimum value for L2 norm of d before terminating interior point
+D_TOL = 5E-2
+
+# threshold minimum barrier value for terminating interior point
+Z_TOL = 1E-12
+
 
 # joblib is an optional dependency, required only for processing multiple cells
 # in parallel
@@ -379,7 +392,7 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
         nloop2 = 0
 
         # converge for this barrier weight
-        while (np.linalg.norm(d) > 5E-2) and (s > 1E-3):
+        while (np.linalg.norm(d) > D_TOL) and (s > S_TOL):
 
             # by projecting everything onto alpha, we reduce this to a 1D
             # vector norm
@@ -439,15 +452,15 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
                 # terminate when the step size gets too small without making
                 # progress
-                elif s < 1E-3:
+                elif s < S_TOL:
                     if verbosity >= 2:
-                        print('terminated linesearch: s < 1E-3 on %i '
-                              'iterations' % nloop3)
+                        print('--> terminated linesearch: s < %.3g on %i '
+                              'iterations' % (S_TOL, nloop3))
                     terminate_linesearch = True
 
                 else:
                     # reduce the step size
-                    s /= 2.
+                    s /= S_FAC
                     nloop3 += 1
 
             nloop2 += 1
@@ -460,14 +473,15 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
         # increment the outer loop counter, reduce the barrier weight
         nloop1 += 1
-        z /= 2.
+        z /= Z_FAC
 
         if (delta_LL < tol):
             terminate_interior = True
 
-        elif z < 1E-6:
+        elif z < Z_TOL:
             if verbosity >= 2:
-                print 'MAP spike train failed to converge before z < 1E-6'
+                print('MAP spike train failed to converge before z < %.3g'
+                      % Z_TOL)
             terminate_interior = True
 
         elif nloop1 > maxiter:
