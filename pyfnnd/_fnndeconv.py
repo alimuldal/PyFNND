@@ -4,7 +4,6 @@ from itertools import izip
 import time
 import warnings
 from _tridiag_solvers import trisolve
-import plotting
 from utils import s2h
 
 DTYPE = np.float64
@@ -58,13 +57,14 @@ try:
         return n_hat, C_hat, LL, theta
 
 except ImportError:
+    # apply_all_cells is left undefined if joblib isn't present
     pass
 
 
 def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
                learn_theta=((0,) * 5), norm_alpha=True, params_tol=1E-3,
                spikes_tol=1E-3, params_maxiter=20, spikes_maxiter=100,
-               verbosity=0, plot=False, frame_shape=None):
+               verbosity=0):
     """
 
     Fast Non-Negative Deconvolution
@@ -131,13 +131,6 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
         0: no convergence messages (default)
         1: convergence messages for model parameters
         2: convergence messages for model parameters & MAP spike train
-
-    plot: bool scalar
-        plot the fit
-
-    frame_shape: tuple
-        if plot == True, this specifies the pixel dimensions of a single frame
-        (nrows, ncols), which are used to plot alpha and beta
 
     Returns:
     ---------------------------------------------------------------------------
@@ -313,14 +306,6 @@ def deconvolve(F, C0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     n_hat = np.r_[0, n_hat]
 
     theta = sigma, alpha, beta, lamb, gamma
-
-    if plot:
-        if (F.shape[0] > 1) and (frame_shape is not None):
-            nrows, ncols = frame_shape
-            plotting.plot_fit_2D(F + offset, n_hat, C_hat, theta, dt,
-                                 nrows, ncols)
-        else:
-            plotting.plot_fit(F + offset, n_hat, C_hat, theta, dt)
 
     return n_hat, C_hat, LL, theta
 
