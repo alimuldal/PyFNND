@@ -25,7 +25,7 @@ def make_fake_movie(nframes, mask_shape=(64, 64), mask_center=None,
     Returns:
     ---------------------------------------------------------------------------
         F:          fluorescence [npixels, nframes]
-        C:          calcium concentration [nframes,]
+        c:          calcium concentration [nframes,]
         n:          spike train [nframes,]
         theta:      tuple of true model parameters:
                     (sigma, alpha, beta, lambda, gamma)
@@ -39,7 +39,7 @@ def make_fake_movie(nframes, mask_shape=(64, 64), mask_center=None,
 
     # internal calcium dynamics
     gamma = np.exp(-dt / tau)
-    C = signal.lfilter(np.r_[1], np.r_[1, -gamma], n, axis=0)
+    c = signal.lfilter(np.r_[1], np.r_[1, -gamma], n, axis=0)
 
     # pixel weights (sum == 1)
     nr, nc = mask_shape
@@ -64,33 +64,33 @@ def make_fake_movie(nframes, mask_shape=(64, 64), mask_center=None,
     epsilon = gen.randn(npix, nframes) * sigma
 
     # simulated fluorescence
-    F = C[None, :] * alpha[:, None] + beta[:, None] + epsilon
+    F = c[None, :] * alpha[:, None] + beta[:, None] + epsilon
 
     theta = (sigma, alpha, beta, lamb, gamma)
 
-    return F, C, n, theta
+    return F, c, n, theta
 
 
-def make_demo_plots():
+def make_demo_plots(seed=0):
 
     # single pixel
-    F, C, n, theta = make_fake_movie(1000, dt=0.02, mask_shape=(1, 1),
-                                     sigma=0.1, seed=0)
-    n_best, C_best, LL, theta_best = deconvolve(
+    F, c, n, theta = make_fake_movie(1000, dt=0.02, mask_shape=(1, 1),
+                                     sigma=0.1, seed=seed)
+    n_best, c_best, LL, theta_best = deconvolve(
         F, dt=0.02, verbosity=1, learn_theta=(0, 1, 1, 0, 0),
-        spikes_tol=1E-3, params_tol=1E-6,
+        spikes_tol=1E-6, params_tol=1E-6, norm_alpha=True, decimate=0,
     )
 
-    plotting.ground_truth_1D(F, n_best, C_best, theta_best, n, C, theta, 0.02)
+    plotting.ground_truth_1D(F, n_best, c_best, theta_best, n, c, theta, 0.02)
 
     # 2D movie
-    F, C, n, theta = make_fake_movie(1000, dt=0.02, mask_shape=(64, 64),
-                                     sigma=0.001, seed=1)
-    n_best, C_best, LL, theta_best = deconvolve(
+    F, c, n, theta = make_fake_movie(1000, dt=0.02, mask_shape=(64, 64),
+                                     sigma=0.001, seed=seed)
+    n_best, c_best, LL, theta_best = deconvolve(
         F, dt=0.02, verbosity=1, learn_theta=(0, 1, 1, 0, 0),
-        spikes_tol=1E-3, params_tol=1E-6,
+        spikes_tol=1E-6, params_tol=1E-6, norm_alpha=True, decimate=0,
     )
-    plotting.ground_truth_2D(F, n_best, C_best, theta_best, n, C, theta, 0.02,
+    plotting.ground_truth_2D(F, n_best, c_best, theta_best, n, c, theta, 0.02,
                              64, 64)
 
 if __name__ == "__main__":
