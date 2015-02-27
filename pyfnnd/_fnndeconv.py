@@ -212,56 +212,13 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
         while not done:
 
-            s = 1.
-            nloop2 = 1
-            terminate_linesearch = False
-
             # a 'full' parameter update, as used in the Vogelstein paper/code
-            theta_up = _update_theta(n_hat, c_hat, F, theta, dt, learn_theta,
+            theta1 = _update_theta(n_hat, c_hat, F, theta, dt, learn_theta,
                                      decimate)
 
-            # we might want to make changes to a copy of c_hat in the
-            # linesearch to get out of local minima
-            c_hat0 = c_hat.copy()
-
-            # backtracking linesearch for the biggest step size that improves
-            # the LL
-            while not terminate_linesearch:
-
-                # increment the parameter values according to the current step
-                # size
-                theta1 = tuple(
-                    (p + (p1 - p) * s for p, p1 in izip(theta, theta_up))
-                )
-
-                # get the new n_hat, c_hat, and LL
-                n1, c_hat1, LL1 = _get_MAP_spikes(
-                    F, c_hat0, theta1, dt, spikes_tol, spikes_maxiter,
-                    verbosity
-                )
-
-                # new solution found
-                if LL1 >= LL:
-                    terminate_linesearch = True
-
-                # terminate if the step size gets too small without seeing any
-                # improvement in LL
-                elif s < 0.01:
-                    if verbosity >= 1:
-                        print('params: terminated linesearch: s < 0.01 on'
-                              ' %i iterations' % nloop2)
-                    terminate_linesearch = True
-                    done = True
-
-                else:
-                    # in order to get out of local minima it can be helpful to
-                    # increase c_hat a bit to ensure that n_hat is non-zero
-                    # everywhere
-                    c_hat0 *= 1.5
-
-                    # reduce the step size, increment the counter
-                    s /= 2.
-                    nloop2 += 1
+            # get the new n_hat, c_hat, and LL
+            n1, c_hat1, LL1 = _get_MAP_spikes(F, c_hat, theta1, dt, spikes_tol,
+                                              spikes_maxiter, verbosity)
 
             # test for convergence
             delta_LL = -((LL1 - LL) / LL)
