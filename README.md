@@ -9,17 +9,18 @@ This is a Python implementation of Joshua Vogelstein's [fast non-negative deconv
 
 where `n_best` is the maximum a posteriori estimate for the most likely spike train, given the fluorescence signal `F`, and the model:
 
-    C_{t} = gamma*C_{t-1} + n_{t},                          n_{t} ~ Exponential(lambda*dt)
-    F_{p,t} = alpha_{p}*C_{t} + beta_{p} + epsilon_{p,t},   epsilon ~ N(0, sigma)
+    c_{t} = gamma*c_{t-1} + n_{t},                         n_{t} ~ Exponential(lambda*dt)
+    F_{p,t} = alpha_{p}*c_{t} + beta_{p} + epsilon_{p,t},  epsilon ~ N(0, sigma)
 
 It is also possible to estimate the model parameters sigma, alpha, beta and lambda from the data using pseudo-EM updates.
 
 This version was written for the [Kaggle Connectomics Challenge](https://www.kaggle.com/c/connectomics), and was optimized for speed when dealing with very large arrays of fluorescence data. In particular, it wraps the [`dgtsv`](http://www.netlib.org/lapack/explore-html/d1/db3/dgtsv_8f.html) subroutine from the LAPACK Fortran library to efficiently solve for the update direction for each Newton step. The optional dependency on [`joblib`](https://pythonhosted.org/joblib) allows multiple fluorescence traces to be processed in parallel.
 
-New in version 0.2
+New in version 0.3
 -------------
-* Ability to infer cell pixel masks from movie frames (multiple overlapping masks are not yet supported)
-* Improved robustness of parameter estimation using backtracking linesearch
+* Big performance improvements for multi-pixel datasets. By pre-projecting the real fluorescence onto the estimated mask, the interior point algorithm operates only on 1D vectors over time, rather than 2D vectors over pixels and time
+* Added an option to decimate the input array over time before initializing or updating the theta parameters. This is particularly useful for large multi-pixel datasets, where a lot of time is spent performing the least-squares fit to update the estimates of the mask and baseline.
+* Removed some clutter and improved the clarity of some of the source code.
 
 Dependencies
 -------------
@@ -48,17 +49,17 @@ Example usage
 from pyfnnd import deconvolve, demo, plotting
 
 # synthetic fluorescence movie
-F, C, n, theta = demo.make_fake_movie(1000, dt=0.02, mask_shape=(64, 64),
+F, c, n, theta = demo.make_fake_movie(1000, dt=0.02, mask_shape=(64, 64),
                                       sigma=0.003, seed=0)
 
 # deconvolve it, learning alpha, beta and lambda
-n_best, C_best, LL, theta_best = deconvolve(
+n_best, c_best, LL, theta_best = deconvolve(
     F, dt=0.02, verbosity=1, learn_theta=(0, 1, 1, 1, 0),
     spikes_tol=1E-6, params_tol=1E-6
 )
 
 # plot the fit against the true parameters
-plotting.ground_truth_2D(F, n_best, C_best, theta_best, n, C, theta, 0.02,
+plotting.ground_truth_2D(F, n_best, c_best, theta_best, n, c, theta, 0.02,
                          64, 64)
 ```
 
