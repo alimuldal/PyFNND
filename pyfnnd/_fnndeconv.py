@@ -163,7 +163,7 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
     tstart = time.time()
 
-    F = np.atleast_2d(F)
+    F = np.atleast_2d(F.astype(DTYPE))
     npix, nt = F.shape
 
     # ensure that F is non-negative
@@ -181,7 +181,7 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
         # push this through the forward model to get c0. this way c0 is
         # guaranteed not to result in negative spike probabities in n_hat on
         # the first iteration.
-        n0 = lamb * dt * np.ones(nt)
+        n0 = lamb * dt * np.ones(nt, dtype=DTYPE)
         c0 = signal.lfilter(np.r_[1.], np.r_[1., -gamma], n0, axis=0)
 
     # if we're not learning the parameters, this step is all we need to do
@@ -302,8 +302,10 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
         alpha /= alpha_sum
         c_hat *= alpha_sum
 
-        # needs to be constrained n_hat can be negative!
+        # needs to be constrained - n_hat can be negative if sum(alpha) is
+        # negative!
         n_hat = c_hat[1:] - gamma * c_hat[:-1]
+        # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
     # correct for the offset we originally applied to F
     beta = beta + offset
@@ -343,13 +345,13 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
     F_bl = F - beta[:, None]
 
     # used for computing the LL and gradient
-    scale_var = 1. / (2 * sigma ** 2)
+    scale_var = 1. / (2 * sigma * sigma)
     lD = lamb * dt
 
     # used for computing the gradient (M.T.dot(lamb * dt))
     grad_lnprior = np.zeros(nt, dtype=DTYPE)
     grad_lnprior[1:] = lD
-    grad_lnprior[:-1] += lD * - gamma
+    grad_lnprior[:-1] -= lD * gamma
 
     # initial estimate of spike probabilities (should be strictly non-negative)
     n_hat = c_hat[1:] - gamma * c_hat[:-1]
@@ -381,10 +383,10 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
 
             # by projecting everything onto alpha, we reduce this to a 1D
             # vector norm
-            alpha_D = alpha_F_bl - alpha_ss * c_hat
+            res = alpha_F_bl - alpha_ss * c_hat
 
             # compute direction of newton step
-            d = _direction(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
+            d = _direction(n_hat, res, alpha_ss, gamma, scale_var,
                            grad_lnprior, z)
 
             terminate_linesearch = False
@@ -490,22 +492,24 @@ def _post_LL(n_hat, D, scale_var, lD, z):
     return LL
 
 
-def _direction(n_hat, alpha_D, alpha_ss, sigma, gamma, scale_var,
+def _direction(n_hat, res, alpha_ss, gamma, scale_var,
                grad_lnprior, z):
 
+    nt = grad_lnprior.shape[0]
+
     # gradient
-    n_term = np.zeros(grad_lnprior.shape[0])
-    n_term[:n_hat.shape[0]] = -gamma / n_hat
-    n_term[-n_hat.shape[0]:] += 1. / n_hat
-    g = (2 * scale_var * alpha_D - grad_lnprior + z * n_term)
+    n_term = np.zeros(nt, dtype=DTYPE)
+    n_term[:(nt - 1)] = -gamma / n_hat
+    n_term[-(nt - 1):] += 1. / n_hat
+    g = (2 * scale_var * res - grad_lnprior + z * n_term)
 
     # main diagonal of the hessian
-    n2 = n_hat ** 2
-    Hd0 = np.zeros(g.shape[0])
-    Hd0[:n_hat.shape[0]] = gamma ** 2 / n2
-    Hd0[-n_hat.shape[0]:] += 1 / n2
+    n2 = n_hat * n_hat
+    Hd0 = np.zeros(nt, dtype=DTYPE)
+    Hd0[:(nt - 1)] = (gamma * gamma) / n2
+    Hd0[-(nt - 1):] += 1 / n2
     Hd0 *= -z
-    Hd0 += -alpha_ss / sigma ** 2
+    Hd0 -= 2 * alpha_ss * scale_var
 
     # upper/lower diagonals of the hessian
     Hd1 = z * gamma / n2
@@ -532,11 +536,14 @@ def _update_theta(n_hat, c_hat, F, theta, dt, learn_theta, decimate=0):
     if learn_alpha:
 
         if learn_beta:
-            A = np.vstack((c_hat, np.ones(c_hat.shape[0])))
+            A = np.vstack((c_hat, np.ones(nt, dtype=DTYPE)))
         else:
             A = c_hat[None, :]
 
         Y, residuals, rank, singular_vals = np.linalg.lstsq(A.T, F.T)
+
+        # # enforce non-negativity of coefficients?
+        # Y[Y < EPS] = EPS
 
         if learn_beta:
             alpha, beta = Y
