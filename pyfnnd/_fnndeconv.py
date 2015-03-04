@@ -401,24 +401,25 @@ def _get_MAP_spikes(F, c_hat, theta, dt, tol=1E-6, maxiter=100, verbosity=0):
                           ' LL=%-10.4g'
                           % (nloop1, nloop2, nloop3, z, s, LL_line))
 
-                # only update c_hat & LL if LL improved
-                if LL_line > LL_barrier:
-                    LL_barrier, n_hat, c_hat = LL_line, n_hat_line, c_hat_line
-                    terminate_linesearch = True
-
                 # if the step size gets too small without making any progress,
                 # we terminate the linesearch and reduce the barrier weight
-                elif s < S_TOL:
+                if s < S_TOL:
                     if verbosity >= 2:
                         print('--> terminated linesearch: s < %.3g on %i '
                               'iterations' % (S_TOL, nloop3))
                     terminate_linesearch = True
                     terminate_barrier = True
 
+                # only update c_hat & LL if LL improved
+                if LL_line > LL_barrier:
+                    LL_barrier, n_hat, c_hat = LL_line, n_hat_line, c_hat_line
+                    terminate_linesearch = True
+
+                # reduce the step size
                 else:
-                    # reduce the step size
                     s /= S_FAC
-                    nloop3 += 1
+
+                nloop3 += 1
 
             # if d gets too small, reduce the barrier weight
             if (np.linalg.norm(d) < D_TOL):
