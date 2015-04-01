@@ -265,6 +265,9 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
     sigma, alpha, beta, lamb, gamma = theta
 
+    # correct for the offset we originally applied to F
+    beta += offset
+
     # we can impose that sum(alpha) == 1 by scaling c_hat and n_hat to
     # compensate
     if norm_alpha:
@@ -276,9 +279,6 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
         # negative!
         n_hat = c_hat[1:] - gamma * c_hat[:-1]
         # assert not np.any(n_hat < 0), "spike probabilities < 0"
-
-    # correct for the offset we originally applied to F
-    beta = beta + offset
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
     # timebin, for convenience we just concatenate 0 to the start of
