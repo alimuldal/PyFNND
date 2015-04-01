@@ -271,14 +271,15 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     # we can impose that sum(alpha) == 1 by scaling c_hat and n_hat to
     # compensate
     if norm_alpha:
+
         alpha_sum = np.sum(alpha)
+        if alpha_sum < 0:
+            warnings.warn('sum(alpha) is negative - n_hat may therefore '
+                          'contain negative values')
         alpha /= alpha_sum
         c_hat *= alpha_sum
 
-        # needs to be constrained - n_hat can be negative if sum(alpha) is
-        # negative!
         n_hat = c_hat[1:] - gamma * c_hat[:-1]
-        # assert not np.any(n_hat < 0), "spike probabilities < 0"
 
     # since we can't use FNND to estimate the spike probabilities in the 0th
     # timebin, for convenience we just concatenate 0 to the start of
