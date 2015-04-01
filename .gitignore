@@ -24,6 +24,8 @@ tmp/*
 *.c
 *.old
 *.orig
+MANIFEST
+dist/*
 
 syntax: regexp
 
