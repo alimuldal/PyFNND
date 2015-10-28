@@ -5,8 +5,14 @@ from ctypes.util import find_library
 from numpy.ctypeslib import ndpointer
 
 # try and find a LAPACK shared library
+try:
+    # if numpy is linked against a lapack library, try that one first
+    try_libnames = np.__config__.lapack_opt_info.get('libraries', [])
+except AttributeError:
+    pass
+try_libnames.extend(['openblas', 'lapack'])
 dgtsv, sgtsv = None, None
-for name in ('openblas', 'lapack'):
+for name in try_libnames:
     libname = find_library(name)
     if libname:
         lapack_lib = ctypes.cdll.LoadLibrary(libname)
