@@ -1,7 +1,9 @@
+from __future__ import absolute_import
 import numpy as np
 from scipy import signal
-from _fnndeconv import deconvolve
-import plotting
+from ._fnndeconv import deconvolve
+from . import plotting
+
 
 def make_fake_movie(nframes, mask_shape=(64, 64), mask_center=None,
                     bg_intensity=0.1, mask_sigma=10, dt=0.02, rate=1.0,

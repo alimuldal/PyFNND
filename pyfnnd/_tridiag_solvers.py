@@ -1,3 +1,4 @@
+from __future__ import print_function
 import numpy as np
 import ctypes
 from ctypes import byref
@@ -155,9 +156,9 @@ def bench_trisolve():
         t2 = (time.time() - start) / nreps
         norm2 = np.linalg.norm(x - xhat)
 
-        print "\nn = %i" % n
-        print "Time (sec):\ttridiag: %g\tLU: %g" % (t1, t2)
-        print "||x - xhat||2:\ttridiag: %g\tLU: %g" % (norm1, norm2)
+        print("\nn = %i" % n)
+        print("Time (sec):\ttridiag: %g\tLU: %g" % (t1, t2))
+        print("||x - xhat||2:\ttridiag: %g\tLU: %g" % (norm1, norm2))
 
         dgtsv_times.append(t1)
         LU_times.append(t2)

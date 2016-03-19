@@ -1,10 +1,13 @@
+from __future__ import print_function, absolute_import
+import sys
+if sys.version_info[0] < 3:
+    from future_builtins import zip
 import numpy as np
 from scipy import signal
-from itertools import izip
 import time
 import warnings
-from _tridiag_solvers import trisolve
-from utils import s2h
+from ._tridiag_solvers import trisolve
+from .utils import s2h
 
 DTYPE = np.float64
 EPS = np.finfo(DTYPE).eps
@@ -64,7 +67,7 @@ try:
         results = pool(delayed(deconvolve)
                        (rr, *fnn_args, **fnn_kwargs) for rr in F)
 
-        n_hat, c_hat, LL, theta = izip(*results)
+        n_hat, c_hat, LL, theta = zip(*results)
         n_hat, c_hat, LL = (np.vstack(a) for a in (n_hat, c_hat, LL))
 
         return n_hat, c_hat, LL, theta
@@ -253,15 +256,15 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
 
             if done:
                 if verbosity >= 1:
-                    print "Last delta log-likelihood:\t%-10.4g" % delta_LL
-                    print "Best posterior log-likelihood:\t%10.3f" % LL
+                    print("Last delta log-likelihood:\t%-10.4g" % delta_LL)
+                    print("Best posterior log-likelihood:\t%10.3f" % LL)
 
             # increment the loop counter
             nloop1 += 1
 
     if verbosity >= 1:
         time_taken = time.time() - tstart
-        print "Completed: %s" % s2h(time_taken)
+        print("Completed: %s" % s2h(time_taken))
 
     sigma, alpha, beta, lamb, gamma = theta
 
