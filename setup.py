@@ -8,4 +8,8 @@ setup(
     url='https://github.com/alimuldal/PyFNND',
     description='A Python implementation of fast non-negative deconvolution',
     packages=['pyfnnd'],
+    install_requires=[
+        'numpy>=1.8.1',
+        'scipy>=0.14.0',
+    ],
 )

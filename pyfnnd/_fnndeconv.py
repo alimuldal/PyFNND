@@ -180,6 +180,7 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
     tstart = time.time()
 
     F = np.atleast_2d(F.astype(DTYPE))
+
     npix, nt = F.shape
 
     # ensure that F is non-negative
@@ -199,6 +200,10 @@ def deconvolve(F, c0=None, theta0=((None,) * 5), dt=0.02, rate=0.5, tau=1.,
         # the first iteration.
         n0 = lamb * dt * np.ones(nt, dtype=DTYPE)
         c0 = signal.lfilter(np.r_[1.], np.r_[1., -gamma], n0, axis=0)
+
+    else:
+        # force a copy because c0 will be modified in place.
+        c0 = c0.copy()
 
     # if we're not learning the parameters, this step is all we need to do
     n_hat, c_hat, LL = _get_MAP_spikes(F, c0, theta, dt, spikes_tol,
