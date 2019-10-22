@@ -79,6 +79,7 @@ it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
+[![No Maintenance Intended](http://unmaintained.tech/badge.svg)](http://unmaintained.tech/)
 
 [1]:http://i.imgur.com/QHrzzvv.png
 [2]:http://i.imgur.com/nWgECEC.png
